@@ -24,6 +24,13 @@ def to_asyncpg_url(database_url: str) -> tuple[str, dict[str, object]]:
     (the pooler is for serverless fan-out; this backend holds long-lived
     worker connections anyway, per spine §1).
     """
+    if not database_url:
+        raise RuntimeError(
+            "DATABASE_URL is not set (empty string) — check that the "
+            "environment actually has it, not just a local .env file. "
+            "SQLAlchemy's own error for this case ('Could not parse SQLAlchemy "
+            "URL from given URL string') doesn't say which variable is missing."
+        )
     parts = urlsplit(database_url)
     scheme = parts.scheme.replace("postgresql", "postgresql+asyncpg", 1)
     clean_url = urlunsplit((scheme, parts.netloc, parts.path, "", ""))
