@@ -38,3 +38,23 @@ uv run mypy app scripts
 uv run pytest -q
 uv run python -m scripts.export_openapi --check
 ```
+
+## Deploying (Railway)
+
+`api` and `worker` are two Railway services in the same project, both built
+from the repo's `Dockerfile`. `worker`'s service settings point its Config
+File Path at `railway.worker.json` instead of the default `railway.json`,
+since Railway applies the root `railway.json` to every service on the repo
+by default — without that override, `worker` would run `api`'s uvicorn
+command instead of its own claim/reaper loop.
+
+**Migrations are not run on boot.** An earlier attempt chained
+`alembic upgrade head` into the container start command; combined with a
+Railway command-parsing quirk (its startCommand doesn't do shell `$VAR`
+expansion unless explicitly wrapped in `sh -c '...'`), this produced a
+deploy that hung silently for the entire healthcheck window. Rather than
+depend on a migration finishing inside that window on every boot, run
+migrations from local (or CI, once that exists) before deploying:
+```
+uv run alembic upgrade head
+```

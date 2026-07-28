@@ -15,7 +15,9 @@ RUN uv sync --frozen --no-dev
 
 ENV PYTHONUNBUFFERED=1
 
-# Overridden per-service on Railway (api chains `alembic upgrade head`; the
-# worker service points this at `app.workers.main` instead) — this default
-# only serves local `docker run` testing.
+# Railway overrides this per-service via railway.json (api) / railway.worker.json
+# (worker, which points at app.workers.main instead) — this default only serves
+# local `docker run` testing. Migrations are NOT chained into either start
+# command: run `alembic upgrade head` from local/CI instead (see CONTRIBUTING.md)
+# — chaining it into the healthcheck-gated boot path proved fragile in practice.
 CMD uv run uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}
