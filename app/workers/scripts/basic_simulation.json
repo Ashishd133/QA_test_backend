@@ -1,0 +1,78 @@
+[
+  {
+    "type": "turn",
+    "delayMs": 300,
+    "data": {
+      "index": 0,
+      "role": "caller",
+      "text": "Hi, I need to block my card, I think it was stolen."
+    }
+  },
+  {
+    "type": "turn",
+    "delayMs": 500,
+    "data": {
+      "index": 1,
+      "role": "agent",
+      "text": "I'm sorry to hear that. Can you confirm your name and date of birth?",
+      "latencyMs": 420
+    }
+  },
+  {
+    "type": "turn",
+    "delayMs": 400,
+    "data": {
+      "index": 2,
+      "role": "caller",
+      "text": "Sure, it's Priya Sharma, 14th March 1990."
+    }
+  },
+  {
+    "type": "assertion",
+    "delayMs": 200,
+    "data": {
+      "assertionId": "a1",
+      "name": "Requests identity verification before action",
+      "status": "passed",
+      "triggeredAtTurn": 1
+    }
+  },
+  {
+    "type": "turn",
+    "delayMs": 600,
+    "data": {
+      "index": 3,
+      "role": "agent",
+      "text": "Thanks, Priya. I've blocked your card ending in 4821. You'll receive a replacement within 5 business days.",
+      "latencyMs": 980
+    }
+  },
+  {
+    "type": "assertion",
+    "delayMs": 200,
+    "data": {
+      "assertionId": "a2",
+      "name": "States card-block timeline",
+      "status": "passed",
+      "triggeredAtTurn": 3
+    }
+  },
+  {
+    "type": "metrics",
+    "delayMs": 100,
+    "data": {
+      "score": 0.95,
+      "avgLatencyMs": 700,
+      "turnsCompleted": 4,
+      "interruptions": 0
+    }
+  },
+  {
+    "type": "done",
+    "delayMs": 300,
+    "data": {
+      "score": 0.95,
+      "resultBadge": "passed"
+    }
+  }
+]
