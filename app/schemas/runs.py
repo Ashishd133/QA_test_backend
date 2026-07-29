@@ -61,3 +61,38 @@ class RunDetail(APIModel):
     transcript: list[TranscriptTurn]
     result_assertions: list[ResultAssertion]
     latency_series: list[float]
+
+
+class DummyIdentity(APIModel):
+    """Deliberately loose (plain strs, no field validators): spine §6 --
+    only *format* is checked at POST time (app/api/runs.py's
+    _validate_dummy_identity, raising the specific `invalid_identity` code
+    the ticket names, not Pydantic's generic 422). A valid-format-but-wrong
+    identity is not an error; the run proceeds and gated branches come back
+    `blocked` with a reason once discovery is actually implemented (B5)."""
+
+    name: str
+    dob: str
+    account: str
+    verification_phrase: str
+
+
+class SimulationRunCreate(APIModel):
+    scenario_id: str
+
+
+AttackCategoryKey = Literal["Injection", "PII", "Auth", "Social", "Harmful"]
+
+
+class DiscoveryRunCreate(APIModel):
+    agent_id: str
+    dummy_identity: DummyIdentity
+
+
+class RedteamRunCreate(APIModel):
+    agent_id: str
+    categories: list[AttackCategoryKey]
+
+
+class RunCreateResponse(APIModel):
+    run_id: str

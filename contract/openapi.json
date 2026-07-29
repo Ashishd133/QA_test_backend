@@ -409,6 +409,23 @@
         "title": "DashboardRunRow",
         "type": "object"
       },
+      "DiscoveryRunCreate": {
+        "properties": {
+          "agentId": {
+            "title": "Agentid",
+            "type": "string"
+          },
+          "dummyIdentity": {
+            "$ref": "#/components/schemas/DummyIdentity"
+          }
+        },
+        "required": [
+          "agentId",
+          "dummyIdentity"
+        ],
+        "title": "DiscoveryRunCreate",
+        "type": "object"
+      },
       "DoneData": {
         "description": "Type-specific completion payload (spine \u00a74): populate whichever\nsubset applies to the run's type (simulation | discovery | redteam).",
         "properties": {
@@ -483,6 +500,35 @@
           }
         },
         "title": "DoneData",
+        "type": "object"
+      },
+      "DummyIdentity": {
+        "description": "Deliberately loose (plain strs, no field validators): spine \u00a76 --\nonly *format* is checked at POST time (app/api/runs.py's\n_validate_dummy_identity, raising the specific `invalid_identity` code\nthe ticket names, not Pydantic's generic 422). A valid-format-but-wrong\nidentity is not an error; the run proceeds and gated branches come back\n`blocked` with a reason once discovery is actually implemented (B5).",
+        "properties": {
+          "account": {
+            "title": "Account",
+            "type": "string"
+          },
+          "dob": {
+            "title": "Dob",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "verificationPhrase": {
+            "title": "Verificationphrase",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "dob",
+          "account",
+          "verificationPhrase"
+        ],
+        "title": "DummyIdentity",
         "type": "object"
       },
       "ErrorData": {
@@ -701,6 +747,34 @@
         "title": "PhoneConfig",
         "type": "object"
       },
+      "RedteamRunCreate": {
+        "properties": {
+          "agentId": {
+            "title": "Agentid",
+            "type": "string"
+          },
+          "categories": {
+            "items": {
+              "enum": [
+                "Injection",
+                "PII",
+                "Auth",
+                "Social",
+                "Harmful"
+              ],
+              "type": "string"
+            },
+            "title": "Categories",
+            "type": "array"
+          }
+        },
+        "required": [
+          "agentId",
+          "categories"
+        ],
+        "title": "RedteamRunCreate",
+        "type": "object"
+      },
       "ResultAssertion": {
         "properties": {
           "detail": {
@@ -722,6 +796,19 @@
           "ok"
         ],
         "title": "ResultAssertion",
+        "type": "object"
+      },
+      "RunCreateResponse": {
+        "properties": {
+          "runId": {
+            "title": "Runid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "runId"
+        ],
+        "title": "RunCreateResponse",
         "type": "object"
       },
       "RunDetail": {
@@ -999,6 +1086,19 @@
           }
         },
         "title": "ScenarioUpdate",
+        "type": "object"
+      },
+      "SimulationRunCreate": {
+        "properties": {
+          "scenarioId": {
+            "title": "Scenarioid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "scenarioId"
+        ],
+        "title": "SimulationRunCreate",
         "type": "object"
       },
       "SipConfig": {
@@ -1767,6 +1867,65 @@
         ]
       }
     },
+    "/v1/discovery/runs": {
+      "post": {
+        "operationId": "create_discovery_run",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DiscoveryRunCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunCreateResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Discovery Run",
+        "tags": [
+          "runs"
+        ]
+      }
+    },
     "/v1/healthz": {
       "get": {
         "operationId": "healthz",
@@ -1789,6 +1948,65 @@
         "summary": "Healthz",
         "tags": [
           "health"
+        ]
+      }
+    },
+    "/v1/redteam/runs": {
+      "post": {
+        "operationId": "create_redteam_run",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RedteamRunCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunCreateResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Redteam Run",
+        "tags": [
+          "runs"
         ]
       }
     },
@@ -2075,6 +2293,65 @@
         "summary": "Update Scenario",
         "tags": [
           "suites"
+        ]
+      }
+    },
+    "/v1/simulations/runs": {
+      "post": {
+        "operationId": "create_simulation_run",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SimulationRunCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunCreateResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Simulation Run",
+        "tags": [
+          "runs"
         ]
       }
     },

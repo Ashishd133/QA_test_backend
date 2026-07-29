@@ -3,22 +3,40 @@ import json
 import time
 import uuid
 from collections.abc import AsyncGenerator
-from datetime import datetime
+from datetime import date, datetime
 
 import asyncpg
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
 from sqlalchemy.engine import RowMapping
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from app.db import get_engine
+from app.deps import require_user_id
 from app.errors import APIError
 from app.formatting import format_duration
-from app.schemas.runs import DashboardRunRow, ResultAssertion, RunDetail, TranscriptTurn
+from app.schemas.runs import (
+    DashboardRunRow,
+    DiscoveryRunCreate,
+    DummyIdentity,
+    RedteamRunCreate,
+    ResultAssertion,
+    RunCreateResponse,
+    RunDetail,
+    SimulationRunCreate,
+    TranscriptTurn,
+)
 from app.verdict import format_score, verdict_for_run
 
 router = APIRouter(tags=["runs"])
+
+_CONCURRENCY_RETRY_AFTER_MS = 5000
+_LIVE_STATUSES = ("queued", "claimed", "running")
+
+_LIVE_RUN_COUNT_SQL = text(
+    "SELECT count(*) FROM runs WHERE agent_id = :agent_id AND status IN :statuses"
+).bindparams(bindparam("statuses", expanding=True))
 
 HEARTBEAT_INTERVAL_SECONDS = 15
 POLL_INTERVAL_SECONDS = 2
@@ -308,3 +326,199 @@ async def get_run(run_id: uuid.UUID, engine: AsyncEngine = Depends(get_engine)) 
 
 def _isoformat(dt: datetime) -> str:
     return dt.isoformat()
+
+
+def _validate_dummy_identity(identity: DummyIdentity) -> None:
+    """Format only (spine §6): a valid-format-but-wrong identity is not an
+    error here -- only shape failures 422 with the ticket's named
+    `invalid_identity` code, not Pydantic's generic `validation_error`."""
+    errors: list[dict[str, object]] = []
+    if not identity.name.strip():
+        errors.append({"loc": ["dummyIdentity", "name"], "msg": "must not be empty"})
+    try:
+        date.fromisoformat(identity.dob)
+    except ValueError:
+        errors.append({"loc": ["dummyIdentity", "dob"], "msg": "must be an ISO date (YYYY-MM-DD)"})
+    if not identity.account.strip():
+        errors.append({"loc": ["dummyIdentity", "account"], "msg": "must not be empty"})
+    if not identity.verification_phrase.strip():
+        errors.append({"loc": ["dummyIdentity", "verificationPhrase"], "msg": "must not be empty"})
+    if errors:
+        raise APIError(
+            "invalid_identity",
+            "dummyIdentity failed format validation",
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            details=errors,
+        )
+
+
+_INSERT_RUN_SQL = text(
+    "INSERT INTO runs (id, type, agent_id, scenario_id, config, idempotency_key, "
+    " created_by_user_id) "
+    "VALUES (:id, :type, :agent_id, :scenario_id, CAST(:config AS jsonb), "
+    " :idempotency_key, :user_id) "
+    "ON CONFLICT (idempotency_key) DO NOTHING "
+    "RETURNING id"
+)
+
+
+async def _create_run(
+    engine: AsyncEngine,
+    *,
+    run_type: str,
+    agent_id: uuid.UUID,
+    scenario_id: uuid.UUID | None,
+    config: dict[str, object],
+    idempotency_key: str | None,
+    user_id: str,
+) -> uuid.UUID:
+    """Concurrency pre-check + idempotent insert in one transaction (spine
+    §5). This is a fail-fast advisory check, not the authoritative gate --
+    that's claim-time enforcement, B3-03, not yet built. `idempotency_key`
+    being NULL never conflicts (Postgres unique constraints never consider
+    NULLs equal), so unkeyed requests always insert a fresh row."""
+    async with engine.connect() as conn, conn.begin():
+        agent_row = (
+            (
+                await conn.execute(
+                    text("SELECT max_concurrency FROM agents WHERE id = :id"), {"id": agent_id}
+                )
+            )
+            .mappings()
+            .first()
+        )
+        if agent_row is None:
+            raise APIError("not_found", "agent not found", status.HTTP_404_NOT_FOUND)
+
+        live_count = (
+            await conn.execute(
+                _LIVE_RUN_COUNT_SQL,
+                {"agent_id": agent_id, "statuses": list(_LIVE_STATUSES)},
+            )
+        ).scalar_one()
+        if live_count >= agent_row["max_concurrency"]:
+            raise APIError(
+                "concurrency_limit",
+                "agent has reached its maximum concurrent runs",
+                status.HTTP_409_CONFLICT,
+                details={"retryAfterMs": _CONCURRENCY_RETRY_AFTER_MS},
+            )
+
+        inserted = (
+            (
+                await conn.execute(
+                    _INSERT_RUN_SQL,
+                    {
+                        "id": uuid.uuid4(),
+                        "type": run_type,
+                        "agent_id": agent_id,
+                        "scenario_id": scenario_id,
+                        "config": json.dumps(config),
+                        "idempotency_key": idempotency_key,
+                        "user_id": user_id,
+                    },
+                )
+            )
+            .mappings()
+            .first()
+        )
+        if inserted is not None:
+            return uuid.UUID(str(inserted["id"]))
+
+        existing = (
+            (
+                await conn.execute(
+                    text("SELECT id FROM runs WHERE idempotency_key = :key"),
+                    {"key": idempotency_key},
+                )
+            )
+            .mappings()
+            .one()
+        )
+        return uuid.UUID(str(existing["id"]))
+
+
+@router.post(
+    "/v1/simulations/runs", response_model=RunCreateResponse, status_code=status.HTTP_202_ACCEPTED
+)
+async def create_simulation_run(
+    body: SimulationRunCreate,
+    user_id: str = Depends(require_user_id),
+    engine: AsyncEngine = Depends(get_engine),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> RunCreateResponse:
+    scenario_id = uuid.UUID(body.scenario_id)
+    async with engine.connect() as conn:
+        scenario_row = (
+            (
+                await conn.execute(
+                    text(
+                        "SELECT s.agent_id FROM scenarios sc "
+                        "JOIN suites s ON s.id = sc.suite_id WHERE sc.id = :id"
+                    ),
+                    {"id": scenario_id},
+                )
+            )
+            .mappings()
+            .first()
+        )
+    if scenario_row is None:
+        raise APIError("not_found", "scenario not found", status.HTTP_404_NOT_FOUND)
+
+    run_id = await _create_run(
+        engine,
+        run_type="simulation",
+        agent_id=scenario_row["agent_id"],
+        scenario_id=scenario_id,
+        config={},
+        idempotency_key=idempotency_key,
+        user_id=user_id,
+    )
+    return RunCreateResponse(run_id=str(run_id))
+
+
+@router.post(
+    "/v1/discovery/runs", response_model=RunCreateResponse, status_code=status.HTTP_202_ACCEPTED
+)
+async def create_discovery_run(
+    body: DiscoveryRunCreate,
+    user_id: str = Depends(require_user_id),
+    engine: AsyncEngine = Depends(get_engine),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> RunCreateResponse:
+    agent_id = uuid.UUID(body.agent_id)
+    _validate_dummy_identity(body.dummy_identity)
+
+    run_id = await _create_run(
+        engine,
+        run_type="discovery",
+        agent_id=agent_id,
+        scenario_id=None,
+        config={"dummyIdentity": body.dummy_identity.model_dump(mode="json", by_alias=True)},
+        idempotency_key=idempotency_key,
+        user_id=user_id,
+    )
+    return RunCreateResponse(run_id=str(run_id))
+
+
+@router.post(
+    "/v1/redteam/runs", response_model=RunCreateResponse, status_code=status.HTTP_202_ACCEPTED
+)
+async def create_redteam_run(
+    body: RedteamRunCreate,
+    user_id: str = Depends(require_user_id),
+    engine: AsyncEngine = Depends(get_engine),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> RunCreateResponse:
+    agent_id = uuid.UUID(body.agent_id)
+
+    run_id = await _create_run(
+        engine,
+        run_type="redteam",
+        agent_id=agent_id,
+        scenario_id=None,
+        config={"categories": body.categories},
+        idempotency_key=idempotency_key,
+        user_id=user_id,
+    )
+    return RunCreateResponse(run_id=str(run_id))
