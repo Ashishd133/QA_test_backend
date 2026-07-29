@@ -522,3 +522,75 @@ async def create_redteam_run(
         user_id=user_id,
     )
     return RunCreateResponse(run_id=str(run_id))
+
+
+_CANCELLABLE_STATUSES = ("queued", "claimed", "running")
+
+
+@router.post("/v1/runs/{run_id}/cancel", status_code=status.HTTP_204_NO_CONTENT)
+async def cancel_run(
+    run_id: uuid.UUID,
+    user_id: str = Depends(require_user_id),
+    engine: AsyncEngine = Depends(get_engine),
+) -> None:
+    """Sets status='cancelled' + NOTIFY only (spine §5) -- the actual partial
+    `done` event is emitted later by whichever executor is running this run
+    (app.workers.fake_runner), which checks this flag every turn. A queued
+    run that never gets claimed just stays 'cancelled' with an empty event
+    log, which B1-03's detail reduction already handles gracefully."""
+    async with engine.connect() as conn, conn.begin():
+        row = (
+            (
+                await conn.execute(
+                    text("SELECT status FROM runs WHERE id = :id FOR UPDATE"), {"id": run_id}
+                )
+            )
+            .mappings()
+            .first()
+        )
+        if row is None:
+            raise APIError("not_found", "run not found", status.HTTP_404_NOT_FOUND)
+        if row["status"] not in _CANCELLABLE_STATUSES:
+            raise APIError(
+                "conflict", "run has already reached a terminal state", status.HTTP_409_CONFLICT
+            )
+        await conn.execute(
+            text("UPDATE runs SET status = 'cancelled' WHERE id = :id"), {"id": run_id}
+        )
+        await conn.execute(text("SELECT pg_notify('run_events', :run_id)"), {"run_id": str(run_id)})
+
+
+@router.post(
+    "/v1/runs/{run_id}/rerun",
+    response_model=RunCreateResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def rerun_run(
+    run_id: uuid.UUID,
+    user_id: str = Depends(require_user_id),
+    engine: AsyncEngine = Depends(get_engine),
+) -> RunCreateResponse:
+    async with engine.connect() as conn:
+        row = (
+            (
+                await conn.execute(
+                    text("SELECT type, agent_id, scenario_id, config FROM runs WHERE id = :id"),
+                    {"id": run_id},
+                )
+            )
+            .mappings()
+            .first()
+        )
+    if row is None:
+        raise APIError("not_found", "run not found", status.HTTP_404_NOT_FOUND)
+
+    new_run_id = await _create_run(
+        engine,
+        run_type=row["type"],
+        agent_id=row["agent_id"],
+        scenario_id=row["scenario_id"],
+        config=row["config"] or {},
+        idempotency_key=None,
+        user_id=user_id,
+    )
+    return RunCreateResponse(run_id=str(new_run_id))

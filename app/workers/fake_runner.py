@@ -7,7 +7,7 @@ from typing import cast
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from app.events import Event, EventType, emit, status_event
+from app.events import Event, EventType, done_event, emit, status_event
 from app.schemas.events import (
     AssertionData,
     AttackData,
@@ -93,26 +93,50 @@ async def run_fake_script(
             event = _build_event(entry)
 
             async with engine.connect() as conn, conn.begin():
-                if index == last_index:
-                    # Reaper-resurrection guard (inverse of the crash case
-                    # above): if the reaper already marked this run 'failed'
-                    # + worker_lost while we were mid-script (e.g. a stalled
-                    # network call in the real B2 executor — unreachable for
-                    # FakeRunner's ~2.7s scripts, but this is the seam B3-04
-                    # stress-tests), we must NOT emit `done` or flip back to
-                    # 'completed': that would put a second, contradictory
-                    # terminal frame in run_events on top of worker_lost.
-                    # SELECT ... FOR UPDATE serializes against the reaper's
-                    # own FOR UPDATE SKIP LOCKED on the same row.
-                    current_status = (
-                        await conn.execute(
-                            text("SELECT status FROM runs WHERE id = :id FOR UPDATE"),
-                            {"id": claimed.id},
-                        )
-                    ).scalar_one()
-                    if current_status not in ("claimed", "running"):
-                        return
+                # Checked every turn, not just the last (spine §5: "the
+                # executing worker checks a cancellation flag each turn").
+                # SELECT ... FOR UPDATE serializes against both the
+                # reaper's and B1-05's cancel endpoint's own row lock.
+                current_status = (
+                    await conn.execute(
+                        text("SELECT status FROM runs WHERE id = :id FOR UPDATE"),
+                        {"id": claimed.id},
+                    )
+                ).scalar_one()
 
+                if current_status == "cancelled":
+                    # B1-05: end gracefully with a partial `done` -- no real
+                    # judge exists yet (B2), so partial completion carries
+                    # no score/verdict, just whatever transcript/assertions
+                    # already made it into run_events before this turn.
+                    partial = done_event(score=None, result_badge=None)
+                    await emit(conn, claimed.id, partial)
+                    await conn.execute(
+                        text(
+                            "UPDATE runs SET ended_at = now(), "
+                            "metrics = CAST(:metrics AS jsonb) WHERE id = :id"
+                        ),
+                        {
+                            "id": claimed.id,
+                            "metrics": json.dumps(
+                                partial.data.model_dump(mode="json", by_alias=True)
+                            ),
+                        },
+                    )
+                    return
+
+                if current_status not in ("claimed", "running"):
+                    # Reaper-resurrection guard: it already marked this run
+                    # 'failed' + worker_lost while we were mid-script (e.g. a
+                    # stalled network call in the real B2 executor —
+                    # unreachable for FakeRunner's ~2.7s scripts, but this is
+                    # the seam B3-04 stress-tests). Must not emit `done` or
+                    # flip back to 'completed': that would put a second,
+                    # contradictory terminal frame in run_events on top of
+                    # worker_lost.
+                    return
+
+                if index == last_index:
                     # The full DoneData dump (including nulls for fields that
                     # don't apply to this run type) is a FakeRunner-only
                     # placeholder — B2's real simulation executor should
