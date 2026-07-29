@@ -3,14 +3,20 @@ import json
 import time
 import uuid
 from collections.abc import AsyncGenerator
+from datetime import datetime
 
 import asyncpg
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import text
+from sqlalchemy.engine import RowMapping
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from app.db import get_engine
+from app.errors import APIError
+from app.formatting import format_duration
+from app.schemas.runs import DashboardRunRow, ResultAssertion, RunDetail, TranscriptTurn
+from app.verdict import format_score, verdict_for_run
 
 router = APIRouter(tags=["runs"])
 
@@ -135,3 +141,170 @@ async def stream_run(
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+_RUN_TITLE_BY_TYPE = {
+    "discovery": "Discovery Run",
+    "redteam": "Red Team Run",
+    "suite": "Suite Run",
+}
+
+
+def _run_title(run_type: str, scenario_name: str | None) -> str:
+    return scenario_name or _RUN_TITLE_BY_TYPE.get(run_type, "Run")
+
+
+_LIST_RUNS_SQL = text(
+    "SELECT r.id, r.status, r.metrics, r.created_at, r.started_at, r.ended_at, "
+    "       a.name AS agent_name, s.name AS suite_name "
+    "FROM runs r "
+    "JOIN agents a ON a.id = r.agent_id "
+    "LEFT JOIN scenarios sc ON sc.id = r.scenario_id "
+    "LEFT JOIN suites s ON s.id = sc.suite_id "
+    "WHERE (CAST(:type AS text) IS NULL OR r.type = CAST(:type AS text)) "
+    "  AND (CAST(:agent_id AS uuid) IS NULL OR r.agent_id = CAST(:agent_id AS uuid)) "
+    "  AND (CAST(:status AS text) IS NULL OR r.status = CAST(:status AS text)) "
+    "  AND (CAST(:suite_id AS uuid) IS NULL OR s.id = CAST(:suite_id AS uuid)) "
+    "ORDER BY r.created_at DESC "
+    "LIMIT :limit"
+)
+
+
+def _dashboard_run_row(row: RowMapping) -> DashboardRunRow:
+    run_id = str(row["id"])
+    metrics = row["metrics"] or {}
+    return DashboardRunRow(
+        id=run_id,
+        suite=row["suite_name"] or "",
+        agent=row["agent_name"],
+        status=verdict_for_run(row["status"], row["metrics"]),
+        pass_rate=format_score(metrics.get("score")),
+        duration=format_duration(row["started_at"], row["ended_at"]),
+        run_id=run_id,
+    )
+
+
+@router.get("/v1/runs", response_model=list[DashboardRunRow])
+async def list_runs(
+    engine: AsyncEngine = Depends(get_engine),
+    type: str | None = Query(default=None),  # noqa: A002
+    suite_id: uuid.UUID | None = Query(default=None, alias="suiteId"),
+    agent_id: uuid.UUID | None = Query(default=None, alias="agentId"),
+    status: str | None = Query(default=None),  # noqa: A002
+    limit: int = Query(default=50, ge=1, le=500),
+) -> list[DashboardRunRow]:
+    async with engine.connect() as conn:
+        rows = (
+            (
+                await conn.execute(
+                    _LIST_RUNS_SQL,
+                    {
+                        "type": type,
+                        "agent_id": agent_id,
+                        "status": status,
+                        "suite_id": suite_id,
+                        "limit": limit,
+                    },
+                )
+            )
+            .mappings()
+            .all()
+        )
+    return [_dashboard_run_row(row) for row in rows]
+
+
+_RUN_DETAIL_SQL = text(
+    "SELECT r.id, r.type, r.status, r.metrics, r.created_at, r.started_at, r.ended_at, "
+    "       a.name AS agent_name, a.transport, a.language, "
+    "       sc.name AS scenario_name, s.name AS suite_name "
+    "FROM runs r "
+    "JOIN agents a ON a.id = r.agent_id "
+    "LEFT JOIN scenarios sc ON sc.id = r.scenario_id "
+    "LEFT JOIN suites s ON s.id = sc.suite_id "
+    "WHERE r.id = :id"
+)
+
+_RUN_EVENTS_SQL = text("SELECT type, data FROM run_events WHERE run_id = :run_id ORDER BY seq")
+
+
+def _reduce_events(
+    events: list[RowMapping],
+) -> tuple[list[TranscriptTurn], list[ResultAssertion], list[float], dict[str, object]]:
+    """Reduced live from run_events (spine: events remain the truth) rather
+    than runs.metrics -- that column only ever holds the terminal `done`
+    event's fields (score/resultBadge/...), not the separate `metrics`
+    event's avgLatencyMs/turnsCompleted/interruptions."""
+    transcript: list[TranscriptTurn] = []
+    latency_series: list[float] = []
+    assertions_by_id: dict[str, ResultAssertion] = {}
+    latest_metrics_event: dict[str, object] = {}
+
+    for row in events:
+        data = row["data"]
+        if row["type"] == "turn":
+            latency_ms = data.get("latencyMs")
+            transcript.append(
+                TranscriptTurn(
+                    role=data["role"],
+                    text=data["text"],
+                    lat=f"{round(latency_ms)}ms" if isinstance(latency_ms, int | float) else None,
+                    flag=data.get("flagged"),
+                    flag_text=data.get("flagReason"),
+                )
+            )
+            if isinstance(latency_ms, int | float):
+                latency_series.append(float(latency_ms))
+        elif row["type"] == "assertion":
+            triggered_at_turn = data.get("triggeredAtTurn")
+            detail = (
+                f"Triggered at turn {triggered_at_turn}" if triggered_at_turn is not None else ""
+            )
+            assertions_by_id[data["assertionId"]] = ResultAssertion(
+                text=data["name"],
+                detail=detail,
+                ok=data["status"] == "passed",
+            )
+        elif row["type"] == "metrics":
+            latest_metrics_event = data
+
+    return transcript, list(assertions_by_id.values()), latency_series, latest_metrics_event
+
+
+@router.get("/v1/runs/{run_id}", response_model=RunDetail)
+async def get_run(run_id: uuid.UUID, engine: AsyncEngine = Depends(get_engine)) -> RunDetail:
+    async with engine.connect() as conn:
+        row = (await conn.execute(_RUN_DETAIL_SQL, {"id": run_id})).mappings().first()
+        if row is None:
+            raise APIError("not_found", "run not found", status.HTTP_404_NOT_FOUND)
+        events = (await conn.execute(_RUN_EVENTS_SQL, {"run_id": run_id})).mappings().all()
+
+    transcript, result_assertions, latency_series, event_metrics = _reduce_events(list(events))
+    done_metrics = row["metrics"] or {}
+    score = done_metrics.get("score")
+    avg_latency_ms = event_metrics.get("avgLatencyMs")
+    agent_meta = f"{row['transport']} · {row['language']}" if row["language"] else row["transport"]
+
+    return RunDetail(
+        id=str(row["id"]),
+        title=_run_title(row["type"], row["scenario_name"]),
+        suite_name=row["suite_name"] or "",
+        scenario_name=row["scenario_name"] or "",
+        agent_name=row["agent_name"],
+        agent_meta=agent_meta,
+        status=verdict_for_run(row["status"], row["metrics"]),
+        score=round(score * 100) if isinstance(score, int | float) else 0,
+        avg_latency=(
+            f"{round(avg_latency_ms)}ms" if isinstance(avg_latency_ms, int | float) else "-"
+        ),
+        wer="-",
+        sentiment="-",
+        duration=format_duration(row["started_at"], row["ended_at"]),
+        created_at=_isoformat(row["created_at"]),
+        transcript=transcript,
+        result_assertions=result_assertions,
+        latency_series=latency_series,
+    )
+
+
+def _isoformat(dt: datetime) -> str:
+    return dt.isoformat()

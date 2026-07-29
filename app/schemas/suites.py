@@ -10,12 +10,10 @@ a scenario's most recent run, not the DB's raw execution-lifecycle
 runs.status enum ('queued'|'claimed'|...); see app/api/suites.py.
 """
 
-from typing import Literal
-
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic.alias_generators import to_camel
 
-Verdict = Literal["pass", "warn", "fail", "idle"]
+from app.verdict import Verdict
 
 
 class APIModel(BaseModel):

@@ -21,8 +21,8 @@ from app.schemas.suites import (
     SuiteDetail,
     SuiteListItem,
     SuiteUpdate,
-    Verdict,
 )
+from app.verdict import Verdict, format_score, verdict_for_run
 
 router = APIRouter(tags=["suites"])
 
@@ -60,38 +60,11 @@ async def _fetch_latest_runs_by_scenario(
         }
 
 
-def _format_score(score: object) -> str:
-    if isinstance(score, int | float):
-        return f"{round(score * 100)}%"
-    return "-"
-
-
-def _badge_from_score(score: float) -> Verdict:
-    if score >= 0.8:
-        return "pass"
-    if score >= 0.5:
-        return "warn"
-    return "fail"
-
-
 def _verdict_and_score(latest: _LatestRun | None) -> tuple[Verdict, str]:
-    """Verdict is computed, not stored (spine §3 has no such column): it
-    reflects the scenario's most recent run, folding in-progress statuses
-    into 'idle' since there's no verdict to show yet."""
     if latest is None:
         return "idle", "-"
-    metrics = latest.metrics or {}
-    score = metrics.get("score")
-    if latest.status == "completed":
-        badge = metrics.get("resultBadge")
-        if badge in ("pass", "warn", "fail"):
-            return badge, _format_score(score)
-        if isinstance(score, int | float):
-            return _badge_from_score(score), _format_score(score)
-        return "pass", "-"
-    if latest.status in ("failed", "cancelled"):
-        return "fail", _format_score(score)
-    return "idle", "-"
+    score = (latest.metrics or {}).get("score")
+    return verdict_for_run(latest.status, latest.metrics), format_score(score)
 
 
 def _derive_initials(persona: str) -> str:

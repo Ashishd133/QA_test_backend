@@ -28,3 +28,16 @@ def relative_time(dt: datetime | None, *, never_label: str = "Never") -> str:
         return f"{months} month{'s' if months != 1 else ''} ago"
     years = int(days // 365)
     return f"{years} year{'s' if years != 1 else ''} ago"
+
+
+def format_duration(start: datetime | None, end: datetime | None) -> str:
+    if start is None:
+        return "-"
+    seconds = int(((end or datetime.now(UTC)) - start).total_seconds())
+    if seconds < 60:
+        return f"{seconds}s"
+    minutes, secs = divmod(seconds, 60)
+    if minutes < 60:
+        return f"{minutes}m {secs}s"
+    hours, mins = divmod(minutes, 60)
+    return f"{hours}h {mins}m"
