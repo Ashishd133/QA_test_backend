@@ -1,7 +1,7 @@
 import json
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, Response, status
@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from app.db import get_engine
 from app.deps import require_user_id
 from app.errors import APIError
+from app.formatting import relative_time
 from app.schemas.suites import (
     ScenarioCreateRequest,
     ScenarioSummary,
@@ -57,31 +58,6 @@ async def _fetch_latest_runs_by_scenario(
             )
             for row in result.mappings().all()
         }
-
-
-def _relative_time(dt: datetime | None) -> str:
-    if dt is None:
-        return "Never"
-    seconds = (datetime.now(UTC) - dt).total_seconds()
-    if seconds < 60:
-        return "just now"
-    minutes = int(seconds // 60)
-    if minutes < 60:
-        return f"{minutes} minute{'s' if minutes != 1 else ''} ago"
-    hours = int(minutes // 60)
-    if hours < 24:
-        return f"{hours} hour{'s' if hours != 1 else ''} ago"
-    days = int(hours // 24)
-    if days < 7:
-        return f"{days} day{'s' if days != 1 else ''} ago"
-    weeks = int(days // 7)
-    if weeks < 5:
-        return f"{weeks} week{'s' if weeks != 1 else ''} ago"
-    months = int(days // 30)
-    if months < 12:
-        return f"{months} month{'s' if months != 1 else ''} ago"
-    years = int(days // 365)
-    return f"{years} year{'s' if years != 1 else ''} ago"
 
 
 def _format_score(score: object) -> str:
@@ -163,7 +139,7 @@ def _suite_list_item(
         name=suite_row["name"],
         desc=suite_row["description"] or "",
         agent=suite_row["agent_name"],
-        last_run=_relative_time(last_run),
+        last_run=relative_time(last_run),
         pass_rate=f"{pr}%",
         pr=pr,
         count=len(scenario_ids),

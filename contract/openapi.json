@@ -1,6 +1,231 @@
 {
   "components": {
     "schemas": {
+      "AgentCreate": {
+        "properties": {
+          "config": {
+            "discriminator": {
+              "mapping": {
+                "phone": "#/components/schemas/PhoneConfig",
+                "sip": "#/components/schemas/SipConfig",
+                "web": "#/components/schemas/WebConfig"
+              },
+              "propertyName": "transport"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/WebConfig"
+              },
+              {
+                "$ref": "#/components/schemas/SipConfig"
+              },
+              {
+                "$ref": "#/components/schemas/PhoneConfig"
+              }
+            ],
+            "title": "Config"
+          },
+          "language": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Language"
+          },
+          "maxConcurrency": {
+            "default": 1,
+            "title": "Maxconcurrency",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "config"
+        ],
+        "title": "AgentCreate",
+        "type": "object"
+      },
+      "AgentDetail": {
+        "properties": {
+          "config": {
+            "additionalProperties": true,
+            "title": "Config",
+            "type": "object"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "language": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Language"
+          },
+          "lastSeenAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lastseenat"
+          },
+          "maxConcurrency": {
+            "title": "Maxconcurrency",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          },
+          "transport": {
+            "enum": [
+              "web",
+              "sip",
+              "phone"
+            ],
+            "title": "Transport",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "transport",
+          "config",
+          "maxConcurrency"
+        ],
+        "title": "AgentDetail",
+        "type": "object"
+      },
+      "AgentHealth": {
+        "properties": {
+          "dotColor": {
+            "title": "Dotcolor",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "meta": {
+            "title": "Meta",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "uptime": {
+            "title": "Uptime",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "meta",
+          "uptime",
+          "dotColor"
+        ],
+        "title": "AgentHealth",
+        "type": "object"
+      },
+      "AgentUpdate": {
+        "properties": {
+          "config": {
+            "anyOf": [
+              {
+                "discriminator": {
+                  "mapping": {
+                    "phone": "#/components/schemas/PhoneConfig",
+                    "sip": "#/components/schemas/SipConfig",
+                    "web": "#/components/schemas/WebConfig"
+                  },
+                  "propertyName": "transport"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/WebConfig"
+                  },
+                  {
+                    "$ref": "#/components/schemas/SipConfig"
+                  },
+                  {
+                    "$ref": "#/components/schemas/PhoneConfig"
+                  }
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Config"
+          },
+          "language": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Language"
+          },
+          "maxConcurrency": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Maxconcurrency"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          }
+        },
+        "title": "AgentUpdate",
+        "type": "object"
+      },
       "AssertionData": {
         "properties": {
           "assertionId": {
@@ -90,6 +315,49 @@
           "agentResponse"
         ],
         "title": "AttackData",
+        "type": "object"
+      },
+      "ConnectedAgent": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "meta": {
+            "title": "Meta",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "Healthy",
+              "Degraded",
+              "Offline"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "tag": {
+            "enum": [
+              "RTC",
+              "SIP",
+              "TEL"
+            ],
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "meta",
+          "tag",
+          "status"
+        ],
+        "title": "ConnectedAgent",
         "type": "object"
       },
       "DoneData": {
@@ -354,6 +622,36 @@
         "title": "NodeData",
         "type": "object"
       },
+      "PhoneConfig": {
+        "properties": {
+          "phoneNumber": {
+            "title": "Phonenumber",
+            "type": "string"
+          },
+          "provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider"
+          },
+          "transport": {
+            "const": "phone",
+            "default": "phone",
+            "title": "Transport",
+            "type": "string"
+          }
+        },
+        "required": [
+          "phoneNumber"
+        ],
+        "title": "PhoneConfig",
+        "type": "object"
+      },
       "ScenarioCreateRequest": {
         "description": "Manual creation requires name+persona; `fromDraftId` short-circuits\nthat (B1-01: idempotent via scenarios.source_draft_ref UNIQUE).",
         "properties": {
@@ -526,6 +824,47 @@
           }
         },
         "title": "ScenarioUpdate",
+        "type": "object"
+      },
+      "SipConfig": {
+        "properties": {
+          "password": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Password"
+          },
+          "sipUri": {
+            "title": "Sipuri",
+            "type": "string"
+          },
+          "transport": {
+            "const": "sip",
+            "default": "sip",
+            "title": "Transport",
+            "type": "string"
+          },
+          "username": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Username"
+          }
+        },
+        "required": [
+          "sipUri"
+        ],
+        "title": "SipConfig",
         "type": "object"
       },
       "StatusData": {
@@ -721,6 +1060,35 @@
         "title": "SuiteUpdate",
         "type": "object"
       },
+      "TestConnectionResult": {
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "rttMs": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rttms"
+          },
+          "success": {
+            "title": "Success",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success",
+          "detail"
+        ],
+        "title": "TestConnectionResult",
+        "type": "object"
+      },
       "TurnData": {
         "properties": {
           "flagReason": {
@@ -816,6 +1184,30 @@
         ],
         "title": "ValidationError",
         "type": "object"
+      },
+      "WebConfig": {
+        "properties": {
+          "roomUrl": {
+            "title": "Roomurl",
+            "type": "string"
+          },
+          "token": {
+            "title": "Token",
+            "type": "string"
+          },
+          "transport": {
+            "const": "web",
+            "default": "web",
+            "title": "Transport",
+            "type": "string"
+          }
+        },
+        "required": [
+          "roomUrl",
+          "token"
+        ],
+        "title": "WebConfig",
+        "type": "object"
       }
     }
   },
@@ -825,6 +1217,326 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/v1/agents": {
+      "get": {
+        "operationId": "list_agents",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ConnectedAgent"
+                  },
+                  "title": "Response List Agents",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Agents",
+        "tags": [
+          "agents"
+        ]
+      },
+      "post": {
+        "operationId": "create_agent",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Agent",
+        "tags": [
+          "agents"
+        ]
+      }
+    },
+    "/v1/agents/health": {
+      "get": {
+        "operationId": "agents_health",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/AgentHealth"
+                  },
+                  "title": "Response Agents Health",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Agents Health",
+        "tags": [
+          "agents"
+        ]
+      }
+    },
+    "/v1/agents/test-connection": {
+      "post": {
+        "operationId": "test_connection_pre_save",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "discriminator": {
+                  "mapping": {
+                    "phone": "#/components/schemas/PhoneConfig",
+                    "sip": "#/components/schemas/SipConfig",
+                    "web": "#/components/schemas/WebConfig"
+                  },
+                  "propertyName": "transport"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/WebConfig"
+                  },
+                  {
+                    "$ref": "#/components/schemas/SipConfig"
+                  },
+                  {
+                    "$ref": "#/components/schemas/PhoneConfig"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestConnectionResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Test Connection Pre Save",
+        "tags": [
+          "agents"
+        ]
+      }
+    },
+    "/v1/agents/{agent_id}": {
+      "delete": {
+        "operationId": "delete_agent",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Agent Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Agent",
+        "tags": [
+          "agents"
+        ]
+      },
+      "get": {
+        "operationId": "get_agent",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Agent Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Agent",
+        "tags": [
+          "agents"
+        ]
+      },
+      "patch": {
+        "operationId": "update_agent",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Agent Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Agent",
+        "tags": [
+          "agents"
+        ]
+      }
+    },
+    "/v1/agents/{agent_id}/test-connection": {
+      "post": {
+        "operationId": "test_connection_post_save",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Agent Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestConnectionResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Test Connection Post Save",
+        "tags": [
+          "agents"
+        ]
+      }
+    },
     "/v1/healthz": {
       "get": {
         "operationId": "healthz",
