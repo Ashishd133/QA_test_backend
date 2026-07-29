@@ -13,12 +13,9 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-from app.config import get_settings
-from app.db import build_engine
+from tests.conftest import _test_engine, requires_test_db
 
-pytestmark = pytest.mark.skipif(
-    not get_settings().database_url, reason="DATABASE_URL not configured"
-)
+pytestmark = requires_test_db
 
 
 @pytest_asyncio.fixture
@@ -26,7 +23,7 @@ async def conn() -> AsyncGenerator[AsyncConnection]:
     # NullPool: asyncpg connections are bound to the event loop that created
     # them; pytest-asyncio hands each test a fresh loop, so a pooled/cached
     # engine reused across tests raises "Future attached to a different loop".
-    engine = build_engine(null_pool=True)
+    engine = _test_engine()
     async with engine.connect() as connection:
         yield connection
         await connection.rollback()

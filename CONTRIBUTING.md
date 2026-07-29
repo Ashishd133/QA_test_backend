@@ -1,5 +1,20 @@
 # Contributing
 
+## Test database
+
+DB-touching tests need `TEST_DATABASE_URL` set (a separate Neon branch, not
+`DATABASE_URL`) — never point tests at the production DB. The deployed
+`worker` service continuously polls that DB for `status='queued'` runs
+(spine §5); it will claim and execute a test-inserted queued row before the
+test's own assertions run (discovered during B1-01, when this broke most of
+`test_workers.py`). `tests/conftest.py`'s `_test_engine()`/`requires_test_db`
+are what every DB test builds its engine from and gates its collection on —
+new DB tests must use them, not `app.db.build_engine()`/`get_settings().database_url`
+directly. Bring a fresh branch to head with:
+```
+DATABASE_URL=<test branch URL> uv run alembic upgrade head
+```
+
 ## Contract sync (cadence-brain ↔ frontend)
 
 This repo is the source of truth for the API contract (spine §2). Every route

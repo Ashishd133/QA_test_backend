@@ -72,7 +72,7 @@
     "delayMs": 300,
     "data": {
       "score": 0.95,
-      "resultBadge": "passed"
+      "resultBadge": "pass"
     }
   }
 ]

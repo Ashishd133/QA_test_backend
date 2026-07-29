@@ -10,8 +10,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from app.config import get_settings
-from app.db import get_engine, to_asyncpg_url
+from app.db import get_engine
 
 router = APIRouter(tags=["runs"])
 
@@ -49,10 +48,15 @@ async def _fetch_events_after(
         return [dict(row._mapping) for row in result.all()]
 
 
-async def _connect_raw(database_url: str) -> asyncpg.Connection:
-    url, connect_args = to_asyncpg_url(database_url)
-    dsn = url.replace("postgresql+asyncpg://", "postgresql://", 1)
-    return await asyncpg.connect(dsn, **connect_args)
+async def _connect_raw(engine: AsyncEngine) -> asyncpg.Connection:
+    """Derives the raw asyncpg DSN from the engine actually passed to
+    event_stream(), rather than a separate settings lookup -- LISTEN/NOTIFY
+    only works within one database, so this connection must land on
+    whichever DB `engine`'s own queries hit (production or, in tests, the
+    isolated Neon branch overriding Depends(get_engine))."""
+    url = engine.url
+    dsn = f"postgresql://{url.username}:{url.password}@{url.host}:{url.port or 5432}/{url.database}"
+    return await asyncpg.connect(dsn, ssl="require")
 
 
 async def event_stream(
@@ -75,7 +79,7 @@ async def event_stream(
     def _on_notify(*_args: object) -> None:
         notified.set()
 
-    raw_conn = await _connect_raw(get_settings().database_url)
+    raw_conn = await _connect_raw(engine)
     await raw_conn.add_listener("run_events", _on_notify)
     try:
         last_heartbeat = time.monotonic()

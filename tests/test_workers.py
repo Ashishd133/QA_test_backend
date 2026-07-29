@@ -14,23 +14,20 @@ import pytest_asyncio
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
-from app.config import get_settings
-from app.db import build_engine
 from app.workers import fake_runner as fake_runner_module
 from app.workers.claim import claim_run
 from app.workers.executors import execute_run
 from app.workers.fake_runner import load_script, run_fake_script
 from app.workers.heartbeat import update_heartbeat
 from app.workers.reaper import reap_stale_runs, reaper_loop
+from tests.conftest import _test_engine, requires_test_db
 
-pytestmark = pytest.mark.skipif(
-    not get_settings().database_url, reason="DATABASE_URL not configured"
-)
+pytestmark = requires_test_db
 
 
 @pytest_asyncio.fixture
 async def engine() -> AsyncIterator[AsyncEngine]:
-    eng = build_engine(null_pool=True)
+    eng = _test_engine()
     yield eng
     await eng.dispose()
 
@@ -199,7 +196,7 @@ async def test_fake_runner_replays_script_and_completes_run(engine: AsyncEngine)
             assert row["status"] == "completed"
             assert row["started_at"] is not None
             assert row["ended_at"] is not None
-            assert row["metrics"]["resultBadge"] == "passed"
+            assert row["metrics"]["resultBadge"] == "pass"
 
             events_result = await conn.execute(
                 text("SELECT seq, type FROM run_events WHERE run_id = :id ORDER BY seq"),

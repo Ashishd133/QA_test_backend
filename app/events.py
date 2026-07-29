@@ -157,7 +157,7 @@ def exposure_event(*, counts: dict[str, int]) -> Event:
 def done_event(
     *,
     score: float | None = None,
-    result_badge: str | None = None,
+    result_badge: Literal["pass", "warn", "fail"] | None = None,
     discovery_result: dict[str, object] | None = None,
     findings_count: int | None = None,
     exposure: dict[str, int] | None = None,

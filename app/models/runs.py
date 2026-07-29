@@ -25,7 +25,9 @@ class Run(Base, OrgScopedMixin, TimestampMixin):
     type: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default="queued")
     agent_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("agents.id"), nullable=False)
-    scenario_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("scenarios.id"), nullable=True)
+    scenario_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("scenarios.id", ondelete="SET NULL"), nullable=True
+    )
     parent_run_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("runs.id"), nullable=True)
     config: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False, server_default="{}")
     idempotency_key: Mapped[str | None] = mapped_column(Text, nullable=True)

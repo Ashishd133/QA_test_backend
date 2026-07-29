@@ -78,7 +78,7 @@ class DoneData(EventData):
     subset applies to the run's type (simulation | discovery | redteam)."""
 
     score: float | None = None
-    result_badge: str | None = None
+    result_badge: Literal["pass", "warn", "fail"] | None = None
     discovery_result: dict[str, object] | None = None
     findings_count: int | None = None
     exposure: dict[str, int] | None = None

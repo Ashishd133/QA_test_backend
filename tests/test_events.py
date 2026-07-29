@@ -6,12 +6,10 @@ concurrency across separate DB sessions (B0-06's acceptance criterion).
 import asyncio
 import uuid
 
-import pytest
 from sqlalchemy import text
 
-from app.config import get_settings
-from app.db import build_engine
 from app.events import assertion_event, emit, error_event, exposure_event, turn_event
+from tests.conftest import _test_engine, requires_test_db
 
 
 def test_turn_event_serializes_camel_case() -> None:
@@ -51,9 +49,9 @@ def test_exposure_event_carries_counts_snapshot() -> None:
     assert event.data.model_dump(by_alias=True) == {"counts": {"pii_leak": 1, "auth_bypass": 0}}
 
 
-@pytest.mark.skipif(not get_settings().database_url, reason="DATABASE_URL not configured")
+@requires_test_db
 async def test_emit_seq_is_gapless_under_concurrency() -> None:
-    engine = build_engine(null_pool=True)
+    engine = _test_engine()
     agent_id = uuid.uuid4()
     run_id = uuid.uuid4()
     n = 20

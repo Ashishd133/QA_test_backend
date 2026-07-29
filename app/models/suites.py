@@ -25,7 +25,9 @@ class Scenario(Base, OrgScopedMixin, TimestampMixin):
     )
 
     id: Mapped[uuid.UUID] = uuid_pk()
-    suite_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("suites.id"), nullable=False)
+    suite_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("suites.id", ondelete="CASCADE"), nullable=False
+    )
     name: Mapped[str] = mapped_column(Text, nullable=False)
     persona: Mapped[str] = mapped_column(Text, nullable=False)
     persona_initials: Mapped[str] = mapped_column(Text, nullable=False)

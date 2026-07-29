@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.routing import APIRoute
 
-from app.api import healthz, runs
+from app.api import healthz, runs, suites
 from app.config import get_settings
 from app.errors import register_exception_handlers
 from app.middleware import ServiceTokenMiddleware
@@ -23,6 +23,7 @@ def create_app() -> FastAPI:
     app.add_middleware(ServiceTokenMiddleware, token=get_settings().python_service_token)
     app.include_router(healthz.router)
     app.include_router(runs.router)
+    app.include_router(suites.router)
     app.openapi = lambda: build_openapi_schema(app)  # type: ignore[method-assign]
 
     return app

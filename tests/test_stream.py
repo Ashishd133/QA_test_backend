@@ -19,18 +19,16 @@ that reaches `done` so a plain non-streaming request completes naturally.
 import asyncio
 import uuid
 
-import pytest
 from sqlalchemy import text
 
 from app.api.runs import event_stream
 from app.config import get_settings
-from app.db import build_engine, get_engine
+from app.db import get_engine
 from app.events import done_event, emit, turn_event
 from app.main import app
+from tests.conftest import _test_engine, requires_test_db
 
-pytestmark = pytest.mark.skipif(
-    not get_settings().database_url, reason="DATABASE_URL not configured"
-)
+pytestmark = requires_test_db
 
 
 def _parse_frame(frame: str) -> tuple[int, str]:
@@ -47,7 +45,7 @@ async def _anext_with_timeout(gen: object, timeout: float = 15.0) -> str:
 
 
 async def test_stream_replay_then_live_then_reconnect() -> None:
-    engine = build_engine(null_pool=True)
+    engine = _test_engine()
     agent_id = uuid.uuid4()
     run_id = uuid.uuid4()
 
@@ -115,7 +113,7 @@ async def test_stream_replay_then_live_then_reconnect() -> None:
 async def test_stream_unknown_run_is_404() -> None:
     from httpx import ASGITransport, AsyncClient
 
-    test_engine = build_engine(null_pool=True)
+    test_engine = _test_engine()
     app.dependency_overrides[get_engine] = lambda: test_engine
     try:
         transport = ASGITransport(app=app)
@@ -141,7 +139,7 @@ async def test_stream_via_real_http_path_completes_on_done() -> None:
     """
     from httpx import ASGITransport, AsyncClient
 
-    engine = build_engine(null_pool=True)
+    engine = _test_engine()
     app.dependency_overrides[get_engine] = lambda: engine
     agent_id = uuid.uuid4()
     run_id = uuid.uuid4()
@@ -163,7 +161,7 @@ async def test_stream_via_real_http_path_completes_on_done() -> None:
                 {"id": run_id, "agent_id": agent_id},
             )
             await emit(conn, run_id, turn_event(index=0, role="agent", text="hi"))
-            await emit(conn, run_id, done_event(score=0.9, result_badge="passed"))
+            await emit(conn, run_id, done_event(score=0.9, result_badge="pass"))
 
         transport = ASGITransport(app=app)
         headers = {"Authorization": f"Bearer {get_settings().python_service_token}"}
