@@ -360,6 +360,66 @@
         "title": "ConnectedAgent",
         "type": "object"
       },
+      "DashboardMetrics": {
+        "properties": {
+          "avgLatency": {
+            "title": "Avglatency",
+            "type": "string"
+          },
+          "avgLatencyDelta": {
+            "title": "Avglatencydelta",
+            "type": "string"
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/Outcome"
+          },
+          "passRate": {
+            "title": "Passrate",
+            "type": "string"
+          },
+          "passRateDelta": {
+            "title": "Passratedelta",
+            "type": "string"
+          },
+          "scenarioCoverage": {
+            "title": "Scenariocoverage",
+            "type": "string"
+          },
+          "scenarioCoverageDelta": {
+            "title": "Scenariocoveragedelta",
+            "type": "string"
+          },
+          "testRuns7d": {
+            "title": "Testruns7D",
+            "type": "string"
+          },
+          "testRunsDelta": {
+            "title": "Testrunsdelta",
+            "type": "string"
+          },
+          "trendBars": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Trendbars",
+            "type": "array"
+          }
+        },
+        "required": [
+          "passRate",
+          "passRateDelta",
+          "testRuns7d",
+          "testRunsDelta",
+          "avgLatency",
+          "avgLatencyDelta",
+          "scenarioCoverage",
+          "scenarioCoverageDelta",
+          "trendBars",
+          "outcome"
+        ],
+        "title": "DashboardMetrics",
+        "type": "object"
+      },
       "DashboardRunRow": {
         "properties": {
           "agent": {
@@ -715,6 +775,84 @@
           "state"
         ],
         "title": "NodeData",
+        "type": "object"
+      },
+      "Outcome": {
+        "properties": {
+          "failed": {
+            "title": "Failed",
+            "type": "integer"
+          },
+          "passPct": {
+            "title": "Passpct",
+            "type": "integer"
+          },
+          "passed": {
+            "title": "Passed",
+            "type": "integer"
+          },
+          "warnings": {
+            "title": "Warnings",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "passed",
+          "warnings",
+          "failed",
+          "passPct"
+        ],
+        "title": "Outcome",
+        "type": "object"
+      },
+      "Persona": {
+        "properties": {
+          "accent": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Accent"
+          },
+          "builtin": {
+            "title": "Builtin",
+            "type": "boolean"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "language": {
+            "title": "Language",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "traits": {
+            "additionalProperties": true,
+            "title": "Traits",
+            "type": "object"
+          },
+          "voice": {
+            "title": "Voice",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "voice",
+          "language",
+          "traits",
+          "builtin"
+        ],
+        "title": "Persona",
         "type": "object"
       },
       "PhoneConfig": {
@@ -1948,6 +2086,52 @@
         "summary": "Healthz",
         "tags": [
           "health"
+        ]
+      }
+    },
+    "/v1/metrics/dashboard": {
+      "get": {
+        "operationId": "get_dashboard_metrics",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DashboardMetrics"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Dashboard Metrics",
+        "tags": [
+          "dashboard"
+        ]
+      }
+    },
+    "/v1/personas": {
+      "get": {
+        "operationId": "list_personas",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/Persona"
+                  },
+                  "title": "Response List Personas",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Personas",
+        "tags": [
+          "dashboard"
         ]
       }
     },

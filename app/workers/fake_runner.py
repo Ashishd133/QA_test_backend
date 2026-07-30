@@ -82,6 +82,7 @@ async def run_fake_script(
         await emit(conn, claimed.id, status_event(status="running"))
 
     heartbeat_task = asyncio.create_task(heartbeat_loop(engine, claimed.id))
+    latest_metrics_data: dict[str, object] = {}
     try:
         last_index = len(script) - 1
         for index, entry in enumerate(script):
@@ -91,6 +92,8 @@ async def run_fake_script(
                 await asyncio.sleep(delay_ms / 1000)
 
             event = _build_event(entry)
+            if event.type == "metrics":
+                latest_metrics_data = event.data.model_dump(mode="json", by_alias=True)
 
             async with engine.connect() as conn, conn.begin():
                 # Checked every turn, not just the last (spine §5: "the
@@ -111,17 +114,16 @@ async def run_fake_script(
                     # already made it into run_events before this turn.
                     partial = done_event(score=None, result_badge=None)
                     await emit(conn, claimed.id, partial)
+                    metrics = {
+                        **latest_metrics_data,
+                        **partial.data.model_dump(mode="json", by_alias=True),
+                    }
                     await conn.execute(
                         text(
                             "UPDATE runs SET ended_at = now(), "
                             "metrics = CAST(:metrics AS jsonb) WHERE id = :id"
                         ),
-                        {
-                            "id": claimed.id,
-                            "metrics": json.dumps(
-                                partial.data.model_dump(mode="json", by_alias=True)
-                            ),
-                        },
+                        {"id": claimed.id, "metrics": json.dumps(metrics)},
                     )
                     return
 
@@ -137,13 +139,19 @@ async def run_fake_script(
                     return
 
                 if index == last_index:
-                    # The full DoneData dump (including nulls for fields that
-                    # don't apply to this run type) is a FakeRunner-only
-                    # placeholder — B2's real simulation executor should
-                    # define runs.metrics's actual shape (score/avg_latency/
-                    # wer/sentiment per spine §3), not inherit this verbatim.
+                    # Merges the last `metrics` event's data (avgLatencyMs/
+                    # turnsCompleted/interruptions) under the `done` event's
+                    # own fields (score/resultBadge win on overlap) --
+                    # spine §3's runs.metrics comment ("score/avg_latency/
+                    # wer/sentiment at completion") means avgLatencyMs must
+                    # actually land here, not just in the metrics event
+                    # itself, so B1-06's dashboard can aggregate cheaply
+                    # across many runs without re-scanning every event log.
                     await emit(conn, claimed.id, event)
-                    metrics = event.data.model_dump(mode="json", by_alias=True)
+                    metrics = {
+                        **latest_metrics_data,
+                        **event.data.model_dump(mode="json", by_alias=True),
+                    }
                     await conn.execute(
                         text(
                             "UPDATE runs SET status = 'completed', ended_at = now(), "
