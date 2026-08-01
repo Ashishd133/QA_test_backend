@@ -45,6 +45,12 @@ async def _clear_runs_table(engine: AsyncEngine) -> AsyncIterator[None]:
     own dev/test use, no other data — removes that whole failure class.
     """
     async with engine.connect() as conn, conn.begin():
+        # B1-07 materializes turns/assertion_results on `done` with no
+        # ON DELETE CASCADE from runs (they're derived, re-derivable data,
+        # not the run_events source of truth -- but the FK still blocks a
+        # bare `DELETE FROM runs` once a completed run has left rows here).
+        await conn.execute(text("DELETE FROM turns"))
+        await conn.execute(text("DELETE FROM assertion_results"))
         await conn.execute(text("DELETE FROM run_events"))
         await conn.execute(text("DELETE FROM runs"))
         await conn.execute(text("DELETE FROM agents"))
@@ -91,6 +97,10 @@ async def _backdate_heartbeat(engine: AsyncEngine, run_id: uuid.UUID, seconds_ag
 async def _cleanup(engine: AsyncEngine, run_ids: list[uuid.UUID], agent_id: uuid.UUID) -> None:
     async with engine.connect() as conn, conn.begin():
         for run_id in run_ids:
+            await conn.execute(text("DELETE FROM turns WHERE run_id = :id"), {"id": run_id})
+            await conn.execute(
+                text("DELETE FROM assertion_results WHERE run_id = :id"), {"id": run_id}
+            )
             await conn.execute(text("DELETE FROM run_events WHERE run_id = :id"), {"id": run_id})
             await conn.execute(text("DELETE FROM runs WHERE id = :id"), {"id": run_id})
         await conn.execute(text("DELETE FROM agents WHERE id = :id"), {"id": agent_id})

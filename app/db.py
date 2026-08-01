@@ -34,7 +34,13 @@ def to_asyncpg_url(database_url: str) -> tuple[str, dict[str, object]]:
     parts = urlsplit(database_url)
     scheme = parts.scheme.replace("postgresql", "postgresql+asyncpg", 1)
     clean_url = urlunsplit((scheme, parts.netloc, parts.path, "", ""))
-    return clean_url, {"ssl": "require"}
+    # Without these, a connection that silently stalls mid-round-trip (a real,
+    # repeatedly observed failure mode against Neon) hangs the awaiting
+    # coroutine forever -- no exception, no timeout, nothing to catch or
+    # retry. `timeout` bounds connection establishment; `command_timeout`
+    # becomes asyncpg's per-statement default for every query issued on that
+    # connection, turning an indefinite hang into a fast, catchable error.
+    return clean_url, {"ssl": "require", "timeout": 10, "command_timeout": 30}
 
 
 def build_engine(database_url: str | None = None, *, null_pool: bool = False) -> AsyncEngine:

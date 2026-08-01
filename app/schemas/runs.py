@@ -3,9 +3,10 @@
 Run/DashboardRunRow/TranscriptTurn/ResultAssertion match the frontend's
 src/types/index.ts verbatim. Detail is assembled by reducing run_events
 directly (spine: events remain the truth) rather than reading
-turns/assertion_results -- those materialized tables don't exist until
-B1-07, and reducing from events works whether or not that ticket has run
-yet (B1-07's own "done when" proves both paths must agree).
+turns/assertion_results -- B1-07 materializes those tables at completion
+for query/report convenience, but this read path deliberately keeps
+reducing from events so it works identically for in-flight and completed
+runs (B1-07's "done when" proves both paths agree once a run is done).
 """
 
 from typing import Literal

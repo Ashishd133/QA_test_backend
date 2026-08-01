@@ -1,11 +1,12 @@
 import asyncio
 import contextlib
 import json
+import uuid
 from pathlib import Path
 from typing import cast
 
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncEngine
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from app.events import Event, EventType, done_event, emit, status_event
 from app.schemas.events import (
@@ -63,6 +64,70 @@ def _build_event(entry: dict[str, object]) -> Event:
     return Event(type=cast(EventType, event_type), data=model_cls.model_validate(raw_data))
 
 
+_MATERIALIZE_TURNS_SQL = text(
+    "SELECT data FROM run_events WHERE run_id = :run_id AND type = 'turn' ORDER BY seq"
+)
+_MATERIALIZE_ASSERTIONS_SQL = text(
+    "SELECT data FROM run_events WHERE run_id = :run_id AND type = 'assertion' ORDER BY seq"
+)
+_INSERT_TURN_SQL = text(
+    "INSERT INTO turns (run_id, idx, role, text, latency_ms, flagged, flag_reason) "
+    "VALUES (:run_id, :idx, :role, :text, :latency_ms, :flagged, :flag_reason)"
+)
+_UPSERT_ASSERTION_SQL = text(
+    "INSERT INTO assertion_results (run_id, assertion_id, name, status, triggered_at_turn) "
+    "VALUES (:run_id, :assertion_id, :name, :status, :triggered_at_turn) "
+    "ON CONFLICT (run_id, assertion_id) DO UPDATE SET "
+    "name = EXCLUDED.name, status = EXCLUDED.status, "
+    "triggered_at_turn = EXCLUDED.triggered_at_turn"
+)
+
+
+async def _materialize(conn: AsyncConnection, run_id: uuid.UUID) -> None:
+    """B1-07: writes turns + assertion_results from the persisted event log
+    (not the in-memory script -- "from the event log" per the ticket, and
+    the only way the two paths can agree) in the same transaction as the
+    status flip. Scoped to turn/assertion only: node/intent/attack have no
+    producing script and no reduce-from-events read path yet (RunDetail
+    only exposes transcript/resultAssertions), so there's nothing for a
+    materialized copy of those to agree with -- the "done when" property
+    test can only bind where both sides exist.
+
+    `idx` is assigned by seq order here, matching _reduce_events building
+    transcript in seq order -- TurnData.index is the script's own turn
+    number and must not be trusted as the materialized row order.
+    """
+    turn_rows = (await conn.execute(_MATERIALIZE_TURNS_SQL, {"run_id": run_id})).scalars().all()
+    for idx, data in enumerate(turn_rows):
+        await conn.execute(
+            _INSERT_TURN_SQL,
+            {
+                "run_id": run_id,
+                "idx": idx,
+                "role": data["role"],
+                "text": data["text"],
+                "latency_ms": data.get("latencyMs"),
+                "flagged": data.get("flagged", False),
+                "flag_reason": data.get("flagReason"),
+            },
+        )
+
+    assertion_rows = (
+        (await conn.execute(_MATERIALIZE_ASSERTIONS_SQL, {"run_id": run_id})).scalars().all()
+    )
+    for data in assertion_rows:
+        await conn.execute(
+            _UPSERT_ASSERTION_SQL,
+            {
+                "run_id": run_id,
+                "assertion_id": data["assertionId"],
+                "name": data["name"],
+                "status": data["status"],
+                "triggered_at_turn": data.get("triggeredAtTurn"),
+            },
+        )
+
+
 async def run_fake_script(
     engine: AsyncEngine, claimed: ClaimedRun, script_name: str = DEFAULT_SCRIPT
 ) -> None:
@@ -114,6 +179,7 @@ async def run_fake_script(
                     # already made it into run_events before this turn.
                     partial = done_event(score=None, result_badge=None)
                     await emit(conn, claimed.id, partial)
+                    await _materialize(conn, claimed.id)
                     metrics = {
                         **latest_metrics_data,
                         **partial.data.model_dump(mode="json", by_alias=True),
@@ -148,6 +214,7 @@ async def run_fake_script(
                     # itself, so B1-06's dashboard can aggregate cheaply
                     # across many runs without re-scanning every event log.
                     await emit(conn, claimed.id, event)
+                    await _materialize(conn, claimed.id)
                     metrics = {
                         **latest_metrics_data,
                         **event.data.model_dump(mode="json", by_alias=True),

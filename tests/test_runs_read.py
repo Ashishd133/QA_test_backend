@@ -1,7 +1,7 @@
 """B1-03 tests: GET /v1/runs (list) and GET /v1/runs/{id} (detail).
 
-Detail is reduced live from run_events (materialized turns/assertion_results
-tables don't exist until B1-07) -- the ticket's own acceptance bar is that a
+Detail is reduced live from run_events, not the turns/assertion_results
+tables B1-07 later materializes -- the ticket's own acceptance bar is that a
 FakeRunner-completed run's detail matches the frontend Run type, so this
 drives an actual FakeRunner execution rather than hand-seeding events.
 """
@@ -45,6 +45,20 @@ async def _make_agent(engine: AsyncEngine, name: str = "Runs Read Agent") -> uui
 
 async def _cleanup(engine: AsyncEngine, agent_id: uuid.UUID) -> None:
     async with engine.connect() as conn, conn.begin():
+        # B1-07 materializes turns/assertion_results on `done` (no cascade
+        # from runs -- they're derived data, not the run_events truth), so
+        # a completed run leaves rows here that must go before `runs` does.
+        await conn.execute(
+            text("DELETE FROM turns WHERE run_id IN (SELECT id FROM runs WHERE agent_id = :id)"),
+            {"id": agent_id},
+        )
+        await conn.execute(
+            text(
+                "DELETE FROM assertion_results "
+                "WHERE run_id IN (SELECT id FROM runs WHERE agent_id = :id)"
+            ),
+            {"id": agent_id},
+        )
         await conn.execute(
             text(
                 "DELETE FROM run_events WHERE run_id IN (SELECT id FROM runs WHERE agent_id = :id)"

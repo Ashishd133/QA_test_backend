@@ -60,6 +60,20 @@ async def _make_queued_run(engine: AsyncEngine, agent_id: uuid.UUID) -> uuid.UUI
 
 async def _cleanup(engine: AsyncEngine, agent_id: uuid.UUID) -> None:
     async with engine.connect() as conn, conn.begin():
+        # B1-07 materializes turns/assertion_results on `done` (no cascade
+        # from runs -- they're derived data, not the run_events truth), so
+        # a completed/cancelled run leaves rows here that must go first.
+        await conn.execute(
+            text("DELETE FROM turns WHERE run_id IN (SELECT id FROM runs WHERE agent_id = :id)"),
+            {"id": agent_id},
+        )
+        await conn.execute(
+            text(
+                "DELETE FROM assertion_results "
+                "WHERE run_id IN (SELECT id FROM runs WHERE agent_id = :id)"
+            ),
+            {"id": agent_id},
+        )
         await conn.execute(
             text(
                 "DELETE FROM run_events WHERE run_id IN (SELECT id FROM runs WHERE agent_id = :id)"
