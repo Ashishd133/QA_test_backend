@@ -14,6 +14,13 @@ class Settings(BaseSettings):
     # under a test before it can assert against them.
     test_database_url: str = ""
     environment: str = "dev"
+    # Reference agent (B2-01): LiveKit itself is configured via the LIVEKIT_URL/
+    # LIVEKIT_API_KEY/LIVEKIT_API_SECRET env vars that AgentServer reads directly.
+    # Gemini Live goes through Vertex AI (the AI-Studio-style GEMINI_API_KEY was
+    # rejected with API_KEY_SERVICE_BLOCKED) — auth is via GOOGLE_APPLICATION_CREDENTIALS
+    # (a service account key), which google-auth picks up automatically.
+    google_cloud_project: str = ""
+    google_cloud_location: str = "us-central1"
 
 
 @lru_cache

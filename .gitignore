@@ -6,3 +6,5 @@ __pycache__/
 .ruff_cache/
 .env
 *.egg-info/
+agenticlayer-*.json
+*-serviceaccount*.json
