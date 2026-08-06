@@ -163,6 +163,28 @@ async def test_discovery_node_blocked_reason_required(conn: AsyncConnection) -> 
     )
 
 
+async def test_runs_end_reason_valid(conn: AsyncConnection) -> None:
+    """B2-06: end_reason is nullable (CHECK passes NULL through unchecked --
+    "null is acceptable until the executor writes it") but any non-null
+    value must be one of the enumerated reasons."""
+    agent_id = await _seed_agent(conn)
+    run_sql = (
+        "INSERT INTO runs (id, type, agent_id, created_by_user_id, end_reason) "
+        "VALUES (:id, 'simulation', :agent_id, 'user-1', :end_reason)"
+    )
+
+    await _expect_integrity_error(
+        conn, run_sql, {"id": uuid.uuid4(), "agent_id": agent_id, "end_reason": "not_a_reason"}
+    )
+
+    await conn.execute(
+        text(run_sql), {"id": uuid.uuid4(), "agent_id": agent_id, "end_reason": None}
+    )
+    await conn.execute(
+        text(run_sql), {"id": uuid.uuid4(), "agent_id": agent_id, "end_reason": "timeout"}
+    )
+
+
 async def test_discovery_intent_reason_required(conn: AsyncConnection) -> None:
     agent_id = await _seed_agent(conn)
     run_id = await _seed_run(conn, agent_id, "discovery")

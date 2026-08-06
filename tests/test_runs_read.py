@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from app.config import get_settings
 from app.main import app
+from app.models.projects import DEFAULT_PROJECT_ID
 from app.workers.claim import claim_run
 from app.workers.fake_runner import run_fake_script
 from tests.conftest import _test_engine, requires_test_db
@@ -103,6 +104,13 @@ async def test_run_detail_matches_frontend_run_shape_after_fake_runner_completes
         assert body["wer"] == "-"
         assert body["sentiment"] == "-"
         assert body["duration"] != "-"
+
+        # B2-06: projectId defaults to the seeded project (server_default,
+        # not left null) since nothing set it explicitly; endReason/cost
+        # stay null until B2-08's executor writes them.
+        assert body["projectId"] == str(DEFAULT_PROJECT_ID)
+        assert body["endReason"] is None
+        assert body["cost"] is None
 
         transcript = body["transcript"]
         assert len(transcript) == 4

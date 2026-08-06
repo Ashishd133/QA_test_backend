@@ -27,6 +27,7 @@ from app.engine.judge.prompts import (
     render_final_prompt,
     render_incremental_prompt,
 )
+from app.usage import UsageTracker
 
 DEFAULT_MODEL = "gemini-2.5-flash"
 MAX_RETRIES = 1  # one retry on malformed JSON before giving up
@@ -38,14 +39,20 @@ class JudgeOutputError(RuntimeError):
     """Raised when the judge's structured output is unparseable after retries."""
 
 
+class _UsageMetadata(Protocol):
+    prompt_token_count: int | None
+    candidates_token_count: int | None
+
+
 class _GenerateContentResponse(Protocol):
-    """Only the two fields `_generate_verdict` reads off a real
+    """Only the fields `_generate_verdict` reads off a real
     `genai.types.GenerateContentResponse` -- kept minimal so a test fake can
     satisfy this structurally without constructing the real (much larger)
     response type."""
 
     parsed: object
     text: str | None
+    usage_metadata: _UsageMetadata | None
 
 
 class _AioModels(Protocol):
@@ -88,6 +95,7 @@ async def _generate_verdict[VerdictT: BaseModel](
     response_model: type[VerdictT],
     prompt_version: str,
     span_name: str,
+    usage: UsageTracker,
 ) -> VerdictT:
     last_error: Exception | None = None
     attempt_prompt = prompt
@@ -105,6 +113,13 @@ async def _generate_verdict[VerdictT: BaseModel](
                     response_schema=response_model,
                 ),
             )
+            # Recorded on every attempt, including retries -- a retry is a
+            # real API call that costs real tokens, not a free do-over.
+            if response.usage_metadata is not None:
+                usage.record_llm_call(
+                    input_tokens=response.usage_metadata.prompt_token_count or 0,
+                    output_tokens=response.usage_metadata.candidates_token_count or 0,
+                )
             parsed = response.parsed
             if isinstance(parsed, response_model):
                 span.set_attribute("judge.verdict", response.text or "")
@@ -125,11 +140,20 @@ async def _generate_verdict[VerdictT: BaseModel](
 class IncrementalJudge:
     """One live pass per turn: flips assertions the transcript newly
     resolves and moves the running score. See `AssertionState` for the
-    per-assertion status this needs as input."""
+    per-assertion status this needs as input.
 
-    def __init__(self, client: GenAIClient, *, model: str = DEFAULT_MODEL) -> None:
+    `usage`: pass the SAME `UsageTracker` instance shared with `FinalJudge`
+    (and, later, the caller runtime's STT/TTS reporting -- B2-08) to
+    accumulate one run's total cost in one place; omit it to get a private
+    tracker scoped to just this judge instance, e.g. for tests.
+    """
+
+    def __init__(
+        self, client: GenAIClient, *, model: str = DEFAULT_MODEL, usage: UsageTracker | None = None
+    ) -> None:
         self._client = client
         self._model = model
+        self.usage = usage if usage is not None else UsageTracker()
 
     async def evaluate(
         self,
@@ -145,16 +169,23 @@ class IncrementalJudge:
             response_model=IncrementalVerdict,
             prompt_version=INCREMENTAL_PROMPT_VERSION,
             span_name="judge.incremental",
+            usage=self.usage,
         )
 
 
 class FinalJudge:
     """One holistic pass at call end: resolves every assertion (including
-    ones the incremental pass never reached), a final score, and sentiment."""
+    ones the incremental pass never reached), a final score, and sentiment.
 
-    def __init__(self, client: GenAIClient, *, model: str = DEFAULT_MODEL) -> None:
+    See `IncrementalJudge`'s docstring for `usage`'s sharing convention.
+    """
+
+    def __init__(
+        self, client: GenAIClient, *, model: str = DEFAULT_MODEL, usage: UsageTracker | None = None
+    ) -> None:
         self._client = client
         self._model = model
+        self.usage = usage if usage is not None else UsageTracker()
 
     async def evaluate(
         self, assertions: list[AssertionSpec], transcript: list[TranscriptTurn]
@@ -167,4 +198,5 @@ class FinalJudge:
             response_model=FinalVerdict,
             prompt_version=FINAL_PROMPT_VERSION,
             span_name="judge.final",
+            usage=self.usage,
         )

@@ -6,6 +6,7 @@ from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, OrgScopedMixin, TimestampMixin, uuid_pk
+from app.models.projects import DEFAULT_PROJECT_ID
 
 
 class Run(Base, OrgScopedMixin, TimestampMixin):
@@ -19,11 +20,21 @@ class Run(Base, OrgScopedMixin, TimestampMixin):
             "status IN ('queued', 'claimed', 'running', 'completed', 'cancelled', 'failed')",
             name="status_valid",
         ),
+        # B2-06: nullable (see Agent.project_id's comment) -- NULL never
+        # violates a CHECK, so this constrains only non-null values.
+        CheckConstraint(
+            "end_reason IS NULL OR end_reason IN "
+            "('completed', 'caller_ended', 'agent_ended', 'timeout', 'cancelled', 'error')",
+            name="end_reason_valid",
+        ),
     )
 
     id: Mapped[uuid.UUID] = uuid_pk()
     type: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default="queued")
+    project_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("projects.id"), nullable=True, server_default=str(DEFAULT_PROJECT_ID)
+    )
     agent_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("agents.id"), nullable=False)
     scenario_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("scenarios.id", ondelete="SET NULL"), nullable=True
@@ -34,6 +45,12 @@ class Run(Base, OrgScopedMixin, TimestampMixin):
     created_by_user_id: Mapped[str] = mapped_column(Text, nullable=False)
     claimed_by: Mapped[str | None] = mapped_column(Text, nullable=True)
     heartbeat_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    # B2-06: caller-runtime/judge usage summary ({llmInputTokens,
+    # llmOutputTokens, judgeCalls, sttSeconds, ttsChars, estUsd}, see
+    # app/usage.py's UsageTracker.as_dict()) -- null until B2-08's executor
+    # writes it, in the same completion transaction as `metrics`.
+    end_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    cost: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(nullable=True)
     ended_at: Mapped[datetime | None] = mapped_column(nullable=True)
     metrics: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)

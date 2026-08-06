@@ -35,6 +35,21 @@ class ResultAssertion(APIModel):
     ok: bool
 
 
+class RunCost(APIModel):
+    """B2-06: matches `runs.cost`'s JSONB shape / UsageTracker.as_dict()
+    exactly (app/usage.py)."""
+
+    llm_input_tokens: int
+    llm_output_tokens: int
+    judge_calls: int
+    stt_seconds: float
+    tts_chars: int
+    est_usd: float
+
+
+EndReason = Literal["completed", "caller_ended", "agent_ended", "timeout", "cancelled", "error"]
+
+
 class DashboardRunRow(APIModel):
     id: str
     suite: str
@@ -43,6 +58,10 @@ class DashboardRunRow(APIModel):
     pass_rate: str
     duration: str
     run_id: str
+    # B2-06: null until B2-08's executor writes them (schema/plumbing only).
+    project_id: str | None = None
+    end_reason: EndReason | None = None
+    cost: RunCost | None = None
 
 
 class RunDetail(APIModel):
@@ -58,6 +77,10 @@ class RunDetail(APIModel):
     wer: str
     sentiment: str
     duration: str
+    # B2-06: null until B2-08's executor writes them (schema/plumbing only).
+    project_id: str | None = None
+    end_reason: EndReason | None = None
+    cost: RunCost | None = None
     created_at: str
     transcript: list[TranscriptTurn]
     result_assertions: list[ResultAssertion]

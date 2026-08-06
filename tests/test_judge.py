@@ -17,14 +17,19 @@ import pytest
 from pydantic import BaseModel
 
 from app.engine.judge.judge import (
+    FinalJudge,
     GenAIClient,
+    IncrementalJudge,
     JudgeOutputError,
     _Aio,
     _AioModels,
     _generate_verdict,
+    _GenerateContentResponse,
+    _UsageMetadata,
 )
-from app.engine.judge.models import AssertionSpec, TranscriptTurn
+from app.engine.judge.models import AssertionSpec, FinalVerdict, IncrementalVerdict, TranscriptTurn
 from app.engine.judge.prompts import render_final_prompt, render_incremental_prompt
+from app.usage import UsageTracker
 
 
 class _DummyVerdict(BaseModel):
@@ -32,9 +37,16 @@ class _DummyVerdict(BaseModel):
 
 
 @dataclass
-class _FakeResponse:
+class _FakeUsageMetadata(_UsageMetadata):
+    prompt_token_count: int | None
+    candidates_token_count: int | None
+
+
+@dataclass
+class _FakeResponse(_GenerateContentResponse):
     parsed: object
     text: str | None = None
+    usage_metadata: _FakeUsageMetadata | None = None
 
 
 @dataclass
@@ -71,6 +83,7 @@ async def test_valid_response_on_first_attempt_needs_no_retry() -> None:
         response_model=_DummyVerdict,
         prompt_version="v1",
         span_name="test.span",
+        usage=UsageTracker(),
     )
 
     assert result == _DummyVerdict(ok=True)
@@ -90,6 +103,7 @@ async def test_malformed_json_is_retried_and_recovers() -> None:
         response_model=_DummyVerdict,
         prompt_version="v1",
         span_name="test.span",
+        usage=UsageTracker(),
     )
 
     assert result == _DummyVerdict(ok=True)
@@ -114,6 +128,7 @@ async def test_malformed_json_past_retry_budget_raises() -> None:
             response_model=_DummyVerdict,
             prompt_version="v1",
             span_name="test.span",
+            usage=UsageTracker(),
         )
 
     assert len(client.aio.models.calls) == 2  # initial attempt + exactly one retry
@@ -135,10 +150,80 @@ async def test_wrong_type_parsed_is_treated_as_malformed() -> None:
         response_model=_DummyVerdict,
         prompt_version="v1",
         span_name="test.span",
+        usage=UsageTracker(),
     )
 
     assert result == _DummyVerdict(ok=False)
     assert len(client.aio.models.calls) == 2
+
+
+async def test_usage_tracker_records_tokens_and_calls_per_attempt() -> None:
+    """A retry is a real, separate API call -- both attempts' token usage
+    must accumulate, not just the one that finally succeeds."""
+    client = _client_returning(
+        _FakeResponse(
+            parsed=None,
+            text="not valid json",
+            usage_metadata=_FakeUsageMetadata(prompt_token_count=100, candidates_token_count=10),
+        ),
+        _FakeResponse(
+            parsed=_DummyVerdict(ok=True),
+            text='{"ok": true}',
+            usage_metadata=_FakeUsageMetadata(prompt_token_count=120, candidates_token_count=8),
+        ),
+    )
+    usage = UsageTracker()
+
+    await _generate_verdict(
+        client,
+        model="fake-model",
+        prompt="prompt",
+        response_model=_DummyVerdict,
+        prompt_version="v1",
+        span_name="test.span",
+        usage=usage,
+    )
+
+    assert usage.judge_calls == 2
+    assert usage.llm_input_tokens == 220
+    assert usage.llm_output_tokens == 18
+
+
+async def test_usage_tracker_shared_across_incremental_and_final_judge() -> None:
+    """The same tracker instance passed to both judges accumulates one
+    run's total across both passes, per IncrementalJudge/FinalJudge's
+    documented sharing convention."""
+    incremental_client = _client_returning(
+        _FakeResponse(
+            parsed=IncrementalVerdict(flips=[], live_score=50),
+            text="{}",
+            usage_metadata=_FakeUsageMetadata(prompt_token_count=200, candidates_token_count=20),
+        )
+    )
+    final_client = _client_returning(
+        _FakeResponse(
+            parsed=FinalVerdict(
+                final_score=80,
+                assertions=[],
+                sentiment="neutral",
+                summary="ok",
+            ),
+            text="{}",
+            usage_metadata=_FakeUsageMetadata(prompt_token_count=300, candidates_token_count=30),
+        )
+    )
+    usage = UsageTracker()
+    incremental_judge = IncrementalJudge(incremental_client, usage=usage)
+    final_judge = FinalJudge(final_client, usage=usage)
+
+    await incremental_judge.evaluate(_ASSERTIONS, _TRANSCRIPT, statuses={})
+    await final_judge.evaluate(_ASSERTIONS, _TRANSCRIPT)
+
+    assert usage is incremental_judge.usage is final_judge.usage
+    assert usage.judge_calls == 2
+    assert usage.llm_input_tokens == 500
+    assert usage.llm_output_tokens == 50
+    assert usage.est_usd > 0
 
 
 _ASSERTIONS = [

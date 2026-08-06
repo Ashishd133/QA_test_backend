@@ -426,9 +426,38 @@
             "title": "Agent",
             "type": "string"
           },
+          "cost": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RunCost"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "duration": {
             "title": "Duration",
             "type": "string"
+          },
+          "endReason": {
+            "anyOf": [
+              {
+                "enum": [
+                  "completed",
+                  "caller_ended",
+                  "agent_ended",
+                  "timeout",
+                  "cancelled",
+                  "error"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Endreason"
           },
           "id": {
             "title": "Id",
@@ -437,6 +466,17 @@
           "passRate": {
             "title": "Passrate",
             "type": "string"
+          },
+          "projectId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Projectid"
           },
           "runId": {
             "title": "Runid",
@@ -885,6 +925,24 @@
         "title": "PhoneConfig",
         "type": "object"
       },
+      "Project": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ],
+        "title": "Project",
+        "type": "object"
+      },
       "RedteamRunCreate": {
         "properties": {
           "agentId": {
@@ -936,6 +994,45 @@
         "title": "ResultAssertion",
         "type": "object"
       },
+      "RunCost": {
+        "description": "B2-06: matches `runs.cost`'s JSONB shape / UsageTracker.as_dict()\nexactly (app/usage.py).",
+        "properties": {
+          "estUsd": {
+            "title": "Estusd",
+            "type": "number"
+          },
+          "judgeCalls": {
+            "title": "Judgecalls",
+            "type": "integer"
+          },
+          "llmInputTokens": {
+            "title": "Llminputtokens",
+            "type": "integer"
+          },
+          "llmOutputTokens": {
+            "title": "Llmoutputtokens",
+            "type": "integer"
+          },
+          "sttSeconds": {
+            "title": "Sttseconds",
+            "type": "number"
+          },
+          "ttsChars": {
+            "title": "Ttschars",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "llmInputTokens",
+          "llmOutputTokens",
+          "judgeCalls",
+          "sttSeconds",
+          "ttsChars",
+          "estUsd"
+        ],
+        "title": "RunCost",
+        "type": "object"
+      },
       "RunCreateResponse": {
         "properties": {
           "runId": {
@@ -963,6 +1060,16 @@
             "title": "Avglatency",
             "type": "string"
           },
+          "cost": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RunCost"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "createdAt": {
             "title": "Createdat",
             "type": "string"
@@ -970,6 +1077,25 @@
           "duration": {
             "title": "Duration",
             "type": "string"
+          },
+          "endReason": {
+            "anyOf": [
+              {
+                "enum": [
+                  "completed",
+                  "caller_ended",
+                  "agent_ended",
+                  "timeout",
+                  "cancelled",
+                  "error"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Endreason"
           },
           "id": {
             "title": "Id",
@@ -981,6 +1107,17 @@
             },
             "title": "Latencyseries",
             "type": "array"
+          },
+          "projectId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Projectid"
           },
           "resultAssertions": {
             "items": {
@@ -2132,6 +2269,31 @@
         "summary": "List Personas",
         "tags": [
           "dashboard"
+        ]
+      }
+    },
+    "/v1/projects": {
+      "get": {
+        "operationId": "list_projects",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/Project"
+                  },
+                  "title": "Response List Projects",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Projects",
+        "tags": [
+          "projects"
         ]
       }
     },

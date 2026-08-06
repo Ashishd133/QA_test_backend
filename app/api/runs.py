@@ -22,6 +22,7 @@ from app.schemas.runs import (
     DummyIdentity,
     RedteamRunCreate,
     ResultAssertion,
+    RunCost,
     RunCreateResponse,
     RunDetail,
     SimulationRunCreate,
@@ -172,8 +173,17 @@ def _run_title(run_type: str, scenario_name: str | None) -> str:
     return scenario_name or _RUN_TITLE_BY_TYPE.get(run_type, "Run")
 
 
+def _run_cost(raw: dict[str, object] | None) -> RunCost | None:
+    """B2-06: `runs.cost` is null until B2-08's executor writes it; its
+    JSONB shape is UsageTracker.as_dict() (app/usage.py), whose keys are
+    already the camelCase RunCost aliases, so model_validate reads it as-is.
+    """
+    return RunCost.model_validate(raw) if raw else None
+
+
 _LIST_RUNS_SQL = text(
     "SELECT r.id, r.status, r.metrics, r.created_at, r.started_at, r.ended_at, "
+    "       r.project_id, r.end_reason, r.cost, "
     "       a.name AS agent_name, s.name AS suite_name "
     "FROM runs r "
     "JOIN agents a ON a.id = r.agent_id "
@@ -199,6 +209,9 @@ def _dashboard_run_row(row: RowMapping) -> DashboardRunRow:
         pass_rate=format_score(metrics.get("score")),
         duration=format_duration(row["started_at"], row["ended_at"]),
         run_id=run_id,
+        project_id=str(row["project_id"]) if row["project_id"] is not None else None,
+        end_reason=row["end_reason"],
+        cost=_run_cost(row["cost"]),
     )
 
 
@@ -233,6 +246,7 @@ async def list_runs(
 
 _RUN_DETAIL_SQL = text(
     "SELECT r.id, r.type, r.status, r.metrics, r.created_at, r.started_at, r.ended_at, "
+    "       r.project_id, r.end_reason, r.cost, "
     "       a.name AS agent_name, a.transport, a.language, "
     "       sc.name AS scenario_name, s.name AS suite_name "
     "FROM runs r "
@@ -317,6 +331,9 @@ async def get_run(run_id: uuid.UUID, engine: AsyncEngine = Depends(get_engine)) 
         wer="-",
         sentiment="-",
         duration=format_duration(row["started_at"], row["ended_at"]),
+        project_id=str(row["project_id"]) if row["project_id"] is not None else None,
+        end_reason=row["end_reason"],
+        cost=_run_cost(row["cost"]),
         created_at=_isoformat(row["created_at"]),
         transcript=transcript,
         result_assertions=result_assertions,
