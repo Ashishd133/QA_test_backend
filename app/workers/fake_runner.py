@@ -1,6 +1,6 @@
 import asyncio
-import contextlib
 import json
+import logging
 import uuid
 from pathlib import Path
 from typing import cast
@@ -27,6 +27,18 @@ from app.workers.heartbeat import heartbeat_loop
 
 SCRIPTS_DIR = Path(__file__).resolve().parent / "scripts"
 DEFAULT_SCRIPT = "basic_simulation.json"
+
+logger = logging.getLogger(__name__)
+
+# If the heartbeat task's in-flight DB call is wedged (a stuck NullPool
+# connection attempt with no error and no timeout of its own -- observed as
+# the root cause of the full-suite hang documented in memory,
+# test-suite-resource-exhaustion), `cancel()` alone can't unstick it: the
+# cancellation is only delivered the next time the task's coroutine is
+# scheduled, which never happens if it's blocked in a socket wait that
+# doesn't check for cancellation. Bounding the wait keeps one wedged
+# heartbeat from hanging the entire run/test process forever.
+_HEARTBEAT_SHUTDOWN_TIMEOUT_SECONDS = 5.0
 
 _EVENT_DATA_MODELS: dict[str, type[EventData]] = {
     "status": StatusData,
@@ -230,5 +242,14 @@ async def run_fake_script(
                     await emit(conn, claimed.id, event)
     finally:
         heartbeat_task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await heartbeat_task
+        try:
+            await asyncio.wait_for(
+                asyncio.shield(heartbeat_task), timeout=_HEARTBEAT_SHUTDOWN_TIMEOUT_SECONDS
+            )
+        except asyncio.CancelledError:
+            pass
+        except TimeoutError:
+            logger.warning(
+                f"heartbeat task for run {claimed.id} did not shut down within "
+                f"{_HEARTBEAT_SHUTDOWN_TIMEOUT_SECONDS}s of cancellation; abandoning it"
+            )
