@@ -9,8 +9,11 @@ dependencies = [
     "fastapi>=0.115",
     "google-cloud-speech>=2.40.0",
     "google-cloud-texttospeech>=2.37.0",
+    "google-genai>=2.16.0",
+    "jinja2>=3.1.6",
     "livekit-agents>=1.6.8",
     "livekit-plugins-google>=1.6.8",
+    "numpy>=2.4.6",
     "pipecat-ai[google,livekit,silero]>=1.7.0",
     "pydantic-settings>=2.6",
     "sqlalchemy[asyncio]>=2.0",
@@ -24,6 +27,7 @@ dev = [
     "pre-commit>=4.0",
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
+    "pytest-timeout>=2.4.0",
     "ruff>=0.7",
 ]
 
@@ -57,3 +61,11 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+# A stalled Postgres connection establishment against the (distant, us-east-1)
+# Neon test branch has no timeout of its own that reliably fires (asyncpg's
+# connect_args timeout is loose -- observed taking up to ~18s despite being
+# configured for 10s) -- without this, the pre-commit hook's `uv run pytest`
+# can hang indefinitely on a single stalled connection instead of failing
+# that one test and moving on.
+timeout = 120
+timeout_method = "thread"

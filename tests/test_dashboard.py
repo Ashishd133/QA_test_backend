@@ -104,6 +104,7 @@ async def _cleanup(engine: AsyncEngine, agent_id: uuid.UUID) -> None:
         await conn.execute(text("DELETE FROM runs WHERE agent_id = :id"), {"id": agent_id})
         await conn.execute(text("DELETE FROM suites WHERE agent_id = :id"), {"id": agent_id})
         await conn.execute(text("DELETE FROM agents WHERE id = :id"), {"id": agent_id})
+    await engine.dispose()
 
 
 async def test_dashboard_metrics_reconcile_with_seeded_fixture() -> None:

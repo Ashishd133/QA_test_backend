@@ -41,6 +41,7 @@ async def _cleanup(engine: AsyncEngine) -> None:
             text("DELETE FROM agents WHERE id = ANY(:ids)"),
             {"ids": [_id(a["key"]) for a in _AGENTS]},
         )
+    await engine.dispose()
 
 
 async def test_seed_is_idempotent_across_two_runs() -> None:

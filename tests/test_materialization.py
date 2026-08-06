@@ -83,6 +83,7 @@ async def _cleanup(engine: AsyncEngine, agent_id: uuid.UUID) -> None:
         )
         await conn.execute(text("DELETE FROM runs WHERE agent_id = :id"), {"id": agent_id})
         await conn.execute(text("DELETE FROM agents WHERE id = :id"), {"id": agent_id})
+    await engine.dispose()
 
 
 def _turn_from_row(row: RowMapping) -> dict[str, Any]:
