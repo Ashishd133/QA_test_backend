@@ -235,6 +235,7 @@ async def run_persona_call(
     on_turn: OnTurn | None = None,
     latency_clock: LatencyClock | None = None,
     cancel_event: asyncio.Event | None = None,
+    run_id: uuid.UUID | None = None,
 ) -> PersonaCallResult:
     """Runs one full call against whatever reference agent is currently
     registered with the LiveKit project (see this module's docstring), drives
@@ -258,6 +259,16 @@ async def run_persona_call(
     executor sets this from a concurrent poll of `runs.status` to stop a
     call early on user cancellation, the same "checked every turn" contract
     `fake_runner.py` implements for scripted runs (spine §5).
+
+    `run_id`: B2-09's correlation key. When given: (1) every log line for
+    the rest of this call, including ones deep inside PersonaRunner/
+    PersonaCaller that only ever reference the bare module-level `logger`,
+    gets `run_id` attached via `logger.contextualize` (a contextvar, not a
+    logger instance threaded through -- see app/observability/logging.py);
+    (2) pipecat's own auto-instrumented STT/TTS/LLM spans get `run_id` as a
+    span attribute too, so a Phoenix trace waterfall for one run shows both
+    the caller/STT spans and (via app/engine/executor/simulation.py's own
+    spans, tagged with the same run_id) the judge spans, correlated.
     """
     url = os.environ["LIVEKIT_URL"]
     api_key = os.environ["LIVEKIT_API_KEY"]
@@ -266,52 +277,58 @@ async def run_persona_call(
     project = os.environ["GOOGLE_CLOUD_PROJECT"]
     location = os.environ["GOOGLE_CLOUD_LOCATION"]
 
-    room_name = f"persona-call-{uuid.uuid4().hex[:8]}"
-    token = _build_token(api_key, api_secret, room_name)
-    logger.info(f"joining room {room_name!r} as cadence-caller (persona={persona.name!r})")
+    with logger.contextualize(run_id=str(run_id) if run_id is not None else None):
+        room_name = f"persona-call-{uuid.uuid4().hex[:8]}"
+        token = _build_token(api_key, api_secret, room_name)
+        logger.info(f"joining room {room_name!r} as cadence-caller (persona={persona.name!r})")
 
-    credentials = service_account.Credentials.from_service_account_file(  # type: ignore[no-untyped-call]
-        creds_path, scopes=["https://www.googleapis.com/auth/cloud-platform"]
-    )
-    persona_caller = PersonaCaller(
-        persona, credentials=credentials, project=project, location=location
-    )
+        credentials = service_account.Credentials.from_service_account_file(  # type: ignore[no-untyped-call]
+            creds_path, scopes=["https://www.googleapis.com/auth/cloud-platform"]
+        )
+        persona_caller = PersonaCaller(
+            persona, credentials=credentials, project=project, location=location
+        )
 
-    transport = LiveKitTransport(
-        url=url,
-        token=token,
-        room_name=room_name,
-        params=LiveKitParams(audio_in_enabled=True, audio_out_enabled=True),
-    )
+        transport = LiveKitTransport(
+            url=url,
+            token=token,
+            room_name=room_name,
+            params=LiveKitParams(audio_in_enabled=True, audio_out_enabled=True),
+        )
 
-    stt = GoogleSTTService(
-        credentials_path=creds_path,
-        settings=GoogleSTTService.Settings(enable_word_time_offsets=True),
-    )
-    tts = GoogleTTSService(
-        credentials_path=creds_path,
-        settings=GoogleTTSService.Settings(voice="en-US-Chirp3-HD-Charon"),
-    )
-    vad = VADProcessor(vad_analyzer=SileroVADAnalyzer())
-    persona_runner = PersonaRunner(persona_caller, on_turn=on_turn, cancel_event=cancel_event)
-    clock = latency_clock if latency_clock is not None else LatencyClock()
+        stt = GoogleSTTService(
+            credentials_path=creds_path,
+            settings=GoogleSTTService.Settings(enable_word_time_offsets=True),
+        )
+        tts = GoogleTTSService(
+            credentials_path=creds_path,
+            settings=GoogleTTSService.Settings(voice="en-US-Chirp3-HD-Charon"),
+        )
+        vad = VADProcessor(vad_analyzer=SileroVADAnalyzer())
+        persona_runner = PersonaRunner(persona_caller, on_turn=on_turn, cancel_event=cancel_event)
+        clock = latency_clock if latency_clock is not None else LatencyClock()
 
-    pipeline = Pipeline([transport.input(), vad, stt, persona_runner, tts, transport.output()])
-    worker = PipelineWorker(pipeline, observers=[clock])
-    runner = WorkerRunner()
+        pipeline = Pipeline([transport.input(), vad, stt, persona_runner, tts, transport.output()])
+        worker = PipelineWorker(
+            pipeline,
+            observers=[clock],
+            enable_tracing=run_id is not None,
+            additional_span_attributes={"run_id": str(run_id)} if run_id is not None else None,
+        )
+        runner = WorkerRunner()
 
-    try:
-        await asyncio.wait_for(runner.run(worker), timeout=RUN_TIMEOUT_SECS)
-    except TimeoutError:
-        logger.error("persona call timed out")
-        await worker.cancel()
+        try:
+            await asyncio.wait_for(runner.run(worker), timeout=RUN_TIMEOUT_SECS)
+        except TimeoutError:
+            logger.error("persona call timed out")
+            await worker.cancel()
 
-    return PersonaCallResult(
-        transcript=persona_runner.transcript,
-        end_reason=persona_runner.end_reason or "timeout",
-        turn_latencies=clock.turn_latencies,
-        interruption_count=clock.interruption_count,
-    )
+        return PersonaCallResult(
+            transcript=persona_runner.transcript,
+            end_reason=persona_runner.end_reason or "timeout",
+            turn_latencies=clock.turn_latencies,
+            interruption_count=clock.interruption_count,
+        )
 
 
 async def main() -> None:

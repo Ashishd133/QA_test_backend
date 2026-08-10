@@ -4,6 +4,8 @@ import os
 import socket
 
 from app.db import get_engine
+from app.observability.logging import configure_logging
+from app.observability.tracing import setup_tracing
 from app.workers.claim import claim_run
 from app.workers.executors import execute_run
 from app.workers.reaper import reaper_loop
@@ -45,6 +47,8 @@ async def run_forever() -> None:
 
 
 def main() -> None:
+    configure_logging()
+    setup_tracing()
     asyncio.run(run_forever())
 
 

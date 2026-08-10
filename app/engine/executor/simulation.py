@@ -17,18 +17,28 @@ Run with `python -m app.workers.main` (registers this via
 `app.workers.executors.EXECUTORS["simulation"]`) while
 `app.engine.reference_agent.agent dev` is running and registered with the
 same LiveKit project.
+
+B2-09: every log line for a run (including ones inside run_persona_call/
+PersonaRunner that this module never calls directly) carries `run_id` via
+`logger.contextualize` -- see app/observability/logging.py. Spans: one root
+`run.simulation` span per run, `judge.incremental_evaluate`/
+`judge.final_evaluate` child spans around the two judge calls, plus
+whatever pipecat auto-instruments for the caller/STT/TTS pipeline inside
+`run_persona_call` (enabled by passing `run_id` through to it) -- all
+sharing the run_id attribute, all under the one TracerProvider
+`app.observability.tracing.setup_tracing()` configures at worker startup.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
-import logging
 import os
 import uuid
 from typing import Literal
 
 from google.oauth2 import service_account
+from loguru import logger
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -47,13 +57,12 @@ from app.events import (
     status_event,
     turn_event,
 )
+from app.observability.tracing import get_tracer
 from app.schemas.runs import TranscriptTurn
 from app.usage import UsageTracker
 from app.workers.claim import ClaimedRun
 from app.workers.heartbeat import heartbeat_loop
 from app.workers.materialize import materialize_run
-
-logger = logging.getLogger(__name__)
 
 # Same bounded-shutdown discipline as fake_runner.py's heartbeat teardown
 # (test-suite-resource-exhaustion / B1-08's cousin: an uncancellable wedge
@@ -178,6 +187,17 @@ async def _shutdown_task(task: asyncio.Task[None], *, timeout: float, label: str
 
 
 async def run_simulation(engine: AsyncEngine, claimed: ClaimedRun) -> None:
+    """Public entrypoint: just opens the run_id logging context (B2-09) and
+    delegates. Kept separate from `_run_simulation_body` rather than
+    threading `with logger.contextualize(...)` through the existing nested
+    try/finally structure below -- contextualize is a contextvar, so
+    wrapping the outer call is equivalent and doesn't force re-indenting
+    the whole function."""
+    with logger.contextualize(run_id=str(claimed.id)):
+        await _run_simulation_body(engine, claimed)
+
+
+async def _run_simulation_body(engine: AsyncEngine, claimed: ClaimedRun) -> None:
     run_id = claimed.id
     if claimed.scenario_id is None:
         # Every simulation run is created from a scenario (app/api/runs.py's
@@ -232,6 +252,30 @@ async def run_simulation(engine: AsyncEngine, claimed: ClaimedRun) -> None:
     cancel_event = asyncio.Event()
     cancel_watcher_task = asyncio.create_task(_poll_for_cancellation(engine, run_id, cancel_event))
 
+    with get_tracer().start_as_current_span(
+        "run.simulation",
+        attributes={"run_id": str(run_id), "scenario_id": str(claimed.scenario_id)},
+    ):
+        await _run_simulation_traced(
+            engine,
+            run_id,
+            persona_spec,
+            assertion_specs,
+            cancel_event,
+            cancel_watcher_task,
+            heartbeat_task,
+        )
+
+
+async def _run_simulation_traced(
+    engine: AsyncEngine,
+    run_id: uuid.UUID,
+    persona_spec: PersonaSpec,
+    assertion_specs: list[AssertionSpec],
+    cancel_event: asyncio.Event,
+    cancel_watcher_task: asyncio.Task[None],
+    heartbeat_task: asyncio.Task[None],
+) -> None:
     # From here on, heartbeat_task and cancel_watcher_task are live -- every
     # exit path (including the early `return`s below, and any exception
     # from a step we don't explicitly guard) must go through the `finally`
@@ -276,9 +320,12 @@ async def run_simulation(engine: AsyncEngine, claimed: ClaimedRun) -> None:
         async def run_incremental() -> None:
             try:
                 judge_transcript = [TranscriptTurn(role=t.speaker, text=t.text) for t in transcript]
-                verdict = await incremental_judge.evaluate(
-                    assertion_specs, judge_transcript, dict(assertion_statuses)
-                )
+                with get_tracer().start_as_current_span(
+                    "judge.incremental_evaluate", attributes={"run_id": str(run_id)}
+                ):
+                    verdict = await incremental_judge.evaluate(
+                        assertion_specs, judge_transcript, dict(assertion_statuses)
+                    )
             except Exception:
                 # "cheap, temperature 0" per the spine, but still a real
                 # network call -- a transient failure here shouldn't take
@@ -356,6 +403,7 @@ async def run_simulation(engine: AsyncEngine, claimed: ClaimedRun) -> None:
                 on_turn=on_turn,
                 latency_clock=latency_clock,
                 cancel_event=cancel_event,
+                run_id=run_id,
             )
         except Exception:
             logger.exception(f"persona call failed for run {run_id}")
@@ -438,9 +486,13 @@ async def run_simulation(engine: AsyncEngine, claimed: ClaimedRun) -> None:
                     )
                 return
 
-            final_verdict = await final_judge.evaluate(
-                assertion_specs, [TranscriptTurn(role=t.speaker, text=t.text) for t in transcript]
-            )
+            with get_tracer().start_as_current_span(
+                "judge.final_evaluate", attributes={"run_id": str(run_id)}
+            ):
+                final_verdict = await final_judge.evaluate(
+                    assertion_specs,
+                    [TranscriptTurn(role=t.speaker, text=t.text) for t in transcript],
+                )
             final_usd_score = final_verdict.final_score / 100
 
             async with engine.connect() as conn, conn.begin():
