@@ -34,6 +34,7 @@ from livekit.plugins import google
 
 from app.config import get_settings
 from app.engine.reference_agent.directory import CustomerRecord, find_by_identity, find_by_name
+from app.gcp_auth import load_google_oauth2_credentials
 
 # AgentServer reads LIVEKIT_URL/LIVEKIT_API_KEY/LIVEKIT_API_SECRET straight from os.environ
 # (unlike app.config.Settings, which parses .env itself) — load it here for local dev; a no-op
@@ -86,9 +87,16 @@ class BankingUserdata:
 
 
 def _build_llm() -> google.realtime.RealtimeModel:
+    # Explicit credentials (app.gcp_auth), not ADC's implicit file-path-only
+    # lookup -- ADC's google.auth.default() only ever reads
+    # GOOGLE_APPLICATION_CREDENTIALS as a path to a file on disk, which is
+    # exactly the assumption that broke the judge client and persona caller
+    # on Railway (see app/gcp_auth.py's docstring): the key file is
+    # .gitignore'd and never makes it into the deployed container.
     settings = get_settings()
     return google.realtime.RealtimeModel(
         vertexai=True,
+        credentials=load_google_oauth2_credentials(),
         project=settings.google_cloud_project,
         location=settings.google_cloud_location,
         model="gemini-live-2.5-flash-native-audio",
