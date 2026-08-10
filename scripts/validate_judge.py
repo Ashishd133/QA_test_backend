@@ -2,9 +2,10 @@
 
 Not a pytest test -- a real model call is non-deterministic and costs
 money/latency, so this is a one-off proof the judge is calibrated
-correctly, run by hand. B2-06's golden eval harness (`evals/`,
-`pytest -m judge_evals`) is where this kind of check becomes a persisted,
-CI-enforced gate with ~30 labeled transcripts instead of 3.
+correctly, run by hand. B2-07's golden eval harness (`evals/`,
+`pytest -m judge_evals`, see tests/test_judge_evals.py) is where this kind
+of check becomes a persisted, CI-enforced gate -- these same 3 transcripts
+are now also `evals/cases/{a,b,c}_*.json`, plus more added there over time.
 
 The 3 transcripts are real recordings from this session's B2-02/B2-04
 caller runs against the reference agent (see /tmp/persona_call2.log,
@@ -28,43 +29,12 @@ from google.oauth2 import service_account
 from loguru import logger
 
 from app.engine.judge.judge import FinalJudge, build_vertex_client
-from app.engine.judge.models import AssertionSpec, TranscriptTurn
+from app.engine.judge.models import TranscriptTurn
+from evals.assertions import A1_REQUESTS_VERIFICATION, A2_CONFIRMS_NEXT_STEPS
 
 load_dotenv()
 
-ASSERTIONS = [
-    AssertionSpec(
-        id="a1",
-        name="Requests identity verification before action",
-        description=(
-            "Before performing any account action (checking balance, blocking a "
-            "card, etc.), the agent asks the caller for identifying details "
-            "(e.g. name, date of birth, security phrase) and does not proceed "
-            "on the strength of a bare request alone."
-        ),
-        distinguish_from=(
-            "Not satisfied by a generic greeting ('Thank you for calling') -- "
-            "the agent must actually ask for specific identifying details. Also "
-            "not the same as successful verification: asking counts even if the "
-            "provided details are then rejected."
-        ),
-    ),
-    AssertionSpec(
-        id="a2",
-        name="Confirms next steps before ending the call",
-        description=(
-            "Before the call ends, the agent confirms to the caller what "
-            "happens next / what was actually done (e.g. 'your card is "
-            "blocked, a replacement will arrive in N days') in relation to "
-            "what the caller originally asked for."
-        ),
-        distinguish_from=(
-            "A generic closing ('anything else I can help with?', 'have a "
-            "great day') does NOT satisfy this -- it must confirm the outcome "
-            "of the caller's actual request, not just be a pleasant sign-off."
-        ),
-    ),
-]
+ASSERTIONS = [A1_REQUESTS_VERIFICATION, A2_CONFIRMS_NEXT_STEPS]
 
 TRANSCRIPT_A = [
     TranscriptTurn(

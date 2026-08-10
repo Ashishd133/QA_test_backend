@@ -1,0 +1,46 @@
+{
+  "id": "d_balance_check_success",
+  "description": "Real recording (B2-07): balance check, clean verification, balance given, confirmed.",
+  "assertion_ids": [
+    "a1",
+    "a2"
+  ],
+  "expected": {
+    "a1": "passed",
+    "a2": "passed"
+  },
+  "transcript": [
+    {
+      "role": "caller",
+      "text": "Hi, could you tell me my account balance please?"
+    },
+    {
+      "role": "agent",
+      "text": "Hello. Thank you for calling Cadence Bank. Before I can access your account details. I'll need to verify your ID."
+    },
+    {
+      "role": "caller",
+      "text": "Of course. My full name is Asha Rao, my date of birth is April 12th, 1990, and my security phrase is 'blue lagoon'."
+    },
+    {
+      "role": "agent",
+      "text": " I can definitely help with that. But first, could you, please State your full name?"
+    },
+    {
+      "role": "caller",
+      "text": "Yes, my full name is Asha Rao."
+    },
+    {
+      "role": "agent",
+      "text": " Thank you Asha. Your current balance is 48,250.75 and the account ending 3671. Is there anything else I can help you with"
+    },
+    {
+      "role": "caller",
+      "text": "No, that's all for me. Thank you so much for your help!"
+    },
+    {
+      "role": "agent",
+      "text": " You're welcome. Have a great day."
+    }
+  ]
+}

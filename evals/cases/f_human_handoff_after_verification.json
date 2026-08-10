@@ -1,0 +1,50 @@
+{
+  "id": "f_human_handoff_after_verification",
+  "description": "Real recording (B2-07): caller asks for a human specialist after verifying; agent confirms the handoff before ending.",
+  "assertion_ids": [
+    "a1",
+    "a2"
+  ],
+  "expected": {
+    "a1": "passed",
+    "a2": "passed"
+  },
+  "transcript": [
+    {
+      "role": "caller",
+      "text": "Hi, I have a billing dispute I need to talk to a real person about."
+    },
+    {
+      "role": "agent",
+      "text": "Hello. Thank you for calling Cadence Bank before I"
+    },
+    {
+      "role": "caller",
+      "text": "Yes, my name is Asha Rao, date of birth April 12th 1990, and my security phrase is 'blue lagoon'. I really need to speak with someone about a complicated charge."
+    },
+    {
+      "role": "agent",
+      "text": " I can certainly help with that to get started. Could you please provide your full name?"
+    },
+    {
+      "role": "caller",
+      "text": "My full name is Asha Rao, as I just mentioned. Can I please speak to a human agent now?"
+    },
+    {
+      "role": "agent",
+      "text": " I'm sorry that didn't match our records. Could you please repeat your full name? Date of birth in security phrase."
+    },
+    {
+      "role": "caller",
+      "text": "My full name is Asha Rao, date of birth April 12th 1990, and the security phrase is 'blue lagoon'."
+    },
+    {
+      "role": "agent",
+      "text": " Thank you. I've confirmed your identity. I'm connecting you to a live specialist now and someone will be with them shortly."
+    },
+    {
+      "role": "caller",
+      "text": "Thank you so much, I appreciate it. Goodbye."
+    }
+  ]
+}

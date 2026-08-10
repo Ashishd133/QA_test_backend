@@ -1,0 +1,62 @@
+{
+  "id": "m_multi_intent_balance_then_card_block",
+  "description": "Real recording (B2-07): single verification, two intents in one call (balance, then card block) -- both resolved and confirmed before the call ends.",
+  "assertion_ids": [
+    "a1",
+    "a2"
+  ],
+  "expected": {
+    "a1": "passed",
+    "a2": "passed"
+  },
+  "transcript": [
+    {
+      "role": "caller",
+      "text": "Hi, I need a couple of things -- first, can you tell me my balance?"
+    },
+    {
+      "role": "agent",
+      "text": "Thanks for calling Cadence Bank. I'd be happy to help you today to"
+    },
+    {
+      "role": "caller",
+      "text": "Okay, thank you."
+    },
+    {
+      "role": "agent",
+      "text": " I'm sorry, I can't help with that until"
+    },
+    {
+      "role": "caller",
+      "text": "Oh, I'm sorry. My full name is Asha Rao, and my date of birth is April 12th, 1990. My security phrase is 'blue lagoon'."
+    },
+    {
+      "role": "agent",
+      "text": " Great, thank you for verifying Asha. How can I help you today?"
+    },
+    {
+      "role": "caller",
+      "text": "Okay, great. So, first, can I get my current account balance, please?"
+    },
+    {
+      "role": "agent",
+      "text": " your current balance is 48,250.75 and the account ending 3671, is there anything else I can help you with"
+    },
+    {
+      "role": "caller",
+      "text": "Okay, thank you. And actually, I also need to block my card. I think I might have lost it."
+    },
+    {
+      "role": "agent",
+      "text": " Your card ending. 1187 has been blocked and a replacement will be mailed within five business days. Is there anything else? I can help you with"
+    },
+    {
+      "role": "caller",
+      "text": "No, that's everything. Thank you so much for your help!"
+    },
+    {
+      "role": "agent",
+      "text": " You're welcome. Have a great day."
+    }
+  ]
+}

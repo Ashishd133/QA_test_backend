@@ -61,6 +61,13 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = [
+    "judge_evals: golden judge eval harness (B2-07) -- real Vertex calls, costs money/latency, excluded from the default run; invoke explicitly with `pytest -m judge_evals`.",
+]
+# judge_evals makes real (non-free, non-deterministic-latency) Vertex API
+# calls -- it's a separate gate (see .github/workflows/judge-evals.yml), not
+# part of the default `pytest -q` every push/PR runs.
+addopts = "-m 'not judge_evals'"
 # A stalled Postgres connection establishment against the (distant, us-east-1)
 # Neon test branch has no timeout of its own that reliably fires (asyncpg's
 # connect_args timeout is loose -- observed taking up to ~18s despite being

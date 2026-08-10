@@ -1,0 +1,18 @@
+{
+  "id": "a_clean_success",
+  "description": "Real recording (B2-04, /tmp/persona_call2.log): identity verifies cleanly, card blocked, replacement confirmed.",
+  "assertion_ids": ["a1", "a2"],
+  "expected": {"a1": "passed", "a2": "passed"},
+  "transcript": [
+    {"role": "caller", "text": "Hi, I think I've lost my debit card and I need it blocked right away."},
+    {"role": "agent", "text": "Hello. Thank you for calling Cadence Bank before I can help you with your"},
+    {"role": "caller", "text": "Yes, I understand. My name is Asha Rao."},
+    {"role": "agent", "text": "I can certainly help with that to confirm your identity. First, can you please provide?"},
+    {"role": "caller", "text": "My date of birth is April 12th, 1990, and my security phrase is 'blue lagoon'."},
+    {"role": "agent", "text": "Thank you. And what is your date of birth?"},
+    {"role": "caller", "text": "It's April 12th, 1990."},
+    {"role": "agent", "text": "Your debit card has been blocked and a replacement will be mailed within five business days. Is there anything else? I can help you with"},
+    {"role": "caller", "text": "No, that's everything. Thank you so much for your help!"},
+    {"role": "agent", "text": "You're welcome. Have a great day."}
+  ]
+}

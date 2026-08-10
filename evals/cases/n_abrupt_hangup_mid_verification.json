@@ -1,0 +1,42 @@
+{
+  "id": "n_abrupt_hangup_mid_verification",
+  "description": "Real recording (B2-07): caller hangs up abruptly mid-verification (before giving date of birth); nothing is ever resolved -- a natural (not planted) analog to case B from B2-05.",
+  "assertion_ids": [
+    "a1",
+    "a2"
+  ],
+  "expected": {
+    "a1": "passed",
+    "a2": "failed"
+  },
+  "transcript": [
+    {
+      "role": "caller",
+      "text": "Hi, I need to block my card, my name is Asha Rao."
+    },
+    {
+      "role": "agent",
+      "text": "Hello. Thank you for calling Cadence Bank before I can."
+    },
+    {
+      "role": "caller",
+      "text": "Before you can what?"
+    },
+    {
+      "role": "agent",
+      "text": " Ask, thank you Miss Rao. And what is your date of birth?"
+    },
+    {
+      "role": "caller",
+      "text": "Oh my gosh, I am so sorry, something just came up, I really have to go right now. Bye!"
+    },
+    {
+      "role": "agent",
+      "text": " Before I can help with your request. I just"
+    },
+    {
+      "role": "agent",
+      "text": " No problem at all, having a day."
+    }
+  ]
+}

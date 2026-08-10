@@ -136,6 +136,10 @@ class PersonaRunner(FrameProcessor):
             self._done = True
             await self.push_frame(EndFrame())
 
+    @property
+    def transcript(self) -> list[Turn]:
+        return self._transcript
+
 
 def _build_token(api_key: str, api_secret: str, room: str) -> str:
     grants = api.VideoGrants(room_join=True, room=room)
@@ -148,7 +152,14 @@ def _build_token(api_key: str, api_secret: str, room: str) -> str:
     )
 
 
-async def main() -> None:
+async def run_persona_call(persona: PersonaSpec) -> list[Turn]:
+    """Runs one full call against whatever reference agent is currently
+    registered with the LiveKit project (see this module's docstring), drives
+    it with `persona`, and returns the resulting transcript. Extracted from
+    the original single-persona `main()` (B2-04) so B2-07's
+    `scripts/record_eval_transcripts.py` can drive many personas back to
+    back without duplicating the pipeline wiring.
+    """
     url = os.environ["LIVEKIT_URL"]
     api_key = os.environ["LIVEKIT_API_KEY"]
     api_secret = os.environ["LIVEKIT_API_SECRET"]
@@ -158,13 +169,13 @@ async def main() -> None:
 
     room_name = f"persona-call-{uuid.uuid4().hex[:8]}"
     token = _build_token(api_key, api_secret, room_name)
-    logger.info(f"joining room {room_name!r} as cadence-caller")
+    logger.info(f"joining room {room_name!r} as cadence-caller (persona={persona.name!r})")
 
     credentials = service_account.Credentials.from_service_account_file(  # type: ignore[no-untyped-call]
         creds_path, scopes=["https://www.googleapis.com/auth/cloud-platform"]
     )
     persona_caller = PersonaCaller(
-        CARD_BLOCK_PERSONA, credentials=credentials, project=project, location=location
+        persona, credentials=credentials, project=project, location=location
     )
 
     transport = LiveKitTransport(
@@ -194,6 +205,12 @@ async def main() -> None:
     except TimeoutError:
         logger.error("persona call timed out")
         await worker.cancel()
+
+    return persona_runner.transcript
+
+
+async def main() -> None:
+    await run_persona_call(CARD_BLOCK_PERSONA)
 
 
 if __name__ == "__main__":

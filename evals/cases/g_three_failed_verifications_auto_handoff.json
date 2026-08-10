@@ -1,0 +1,58 @@
+{
+  "id": "g_three_failed_verifications_auto_handoff",
+  "description": "Real recording (B2-07): caller repeatedly gives details that never match (3 attempts); agent auto-escalates to a human specialist per MAX_VERIFICATION_ATTEMPTS. a2 is failed, not passed, despite the handoff: unlike f (where the caller asked FOR a human, so the handoff IS the outcome), here the caller's actual ask was 'block my card' -- verification never succeeded, so that request is never resolved. 'Connecting you to a specialist' confirms an escalation, not the outcome of what was originally asked for.",
+  "assertion_ids": [
+    "a1",
+    "a2"
+  ],
+  "expected": {
+    "a1": "passed",
+    "a2": "failed"
+  },
+  "transcript": [
+    {
+      "role": "caller",
+      "text": "Hi, I need to block my card right now, it's an emergency."
+    },
+    {
+      "role": "agent",
+      "text": "Hello. Thank you for calling Cadence Bank before I can access your"
+    },
+    {
+      "role": "caller",
+      "text": "Yes, I understand. My name is Rahul Mehta, my date of birth is March 3rd, 1978, and my security phrase is red balloon. Now, can we please block my card?"
+    },
+    {
+      "role": "agent",
+      "text": " I understand it's an emergency to verify your identity and proceed, could you"
+    },
+    {
+      "role": "caller",
+      "text": "Look, I already told you. It's Rahul Mehta, March 3rd, 1978, and red balloon. Can we please just get this done?"
+    },
+    {
+      "role": "agent",
+      "text": " I'm sorry. Those details didn't match our records. Could you please repeat your full name date of birth and security phrase."
+    },
+    {
+      "role": "caller",
+      "text": "I just told you! It's Rahul Mehta, March 3rd, 1978, and my security phrase is red balloon. Why are you making this so difficult?"
+    },
+    {
+      "role": "agent",
+      "text": " I apologize for the difficulty to ensure the security of your account. Could you please State your full name date of birth and security phrase one more time?"
+    },
+    {
+      "role": "caller",
+      "text": "This is ridiculous! It's Rahul Mehta, March 3rd, 1978, and my security phrase is red balloon. How many times do I have to say it?"
+    },
+    {
+      "role": "agent",
+      "text": " Thank you for providing that information again. I'm connecting you to a live specialist now and someone will be with you shortly."
+    },
+    {
+      "role": "caller",
+      "text": "Finally! A specialist? This is taking forever. Just get them on the line."
+    }
+  ]
+}

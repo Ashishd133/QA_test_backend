@@ -1,0 +1,21 @@
+{
+  "id": "b_verification_loop_cutoff",
+  "description": "Real recording (B2-04, /tmp/persona_call.log): agent asks for verification repeatedly but the call is cut off mid-loop -- never resolves, no next-steps confirmation.",
+  "assertion_ids": ["a1", "a2"],
+  "expected": {"a1": "passed", "a2": "failed"},
+  "transcript": [
+    {"role": "caller", "text": "Hi, I think I've lost my debit card and I need it blocked right away."},
+    {"role": "agent", "text": "Hello. Thank you for calling Cadence Bank before I can assist you."},
+    {"role": "caller", "text": "Yes, my name is Priya Sharma."},
+    {"role": "agent", "text": "I understand and I can help with that first. Could you please State your full name for verification?"},
+    {"role": "caller", "text": "Yes, it's Priya Sharma."},
+    {"role": "agent", "text": "Thank you Priya. And what is your date of birth?"},
+    {"role": "caller", "text": "It's October 12th, 1985."},
+    {"role": "agent", "text": "Got it. And what is your date of birth?"},
+    {"role": "caller", "text": "It's October 12th, 1985."},
+    {"role": "agent", "text": "Thank you."},
+    {"role": "caller", "text": "So, about my card, can you block it for me please?"},
+    {"role": "agent", "text": "I'm sorry those details didn't match our records."},
+    {"role": "caller", "text": "Oh, okay. So, about blocking my card?"}
+  ]
+}

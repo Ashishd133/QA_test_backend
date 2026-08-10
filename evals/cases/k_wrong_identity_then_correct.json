@@ -1,0 +1,66 @@
+{
+  "id": "k_wrong_identity_then_correct",
+  "description": "Real recording (B2-07): caller misremembers their date of birth on the first attempt, corrects it, verification succeeds on retry, balance given and confirmed.",
+  "assertion_ids": [
+    "a1",
+    "a2"
+  ],
+  "expected": {
+    "a1": "passed",
+    "a2": "passed"
+  },
+  "transcript": [
+    {
+      "role": "caller",
+      "text": "Hi, could you check my balance for me?"
+    },
+    {
+      "role": "agent",
+      "text": "Hello. Thank you for calling Cadence Bank before I can access."
+    },
+    {
+      "role": "caller",
+      "text": "Oh, yes, of course. My name is Asha Rao, and my date of birth is April 12th, 1991. And my security phrase is 'blue lagoon'."
+    },
+    {
+      "role": "agent",
+      "text": " I can certainly help with that first. Could you please provide your full name?"
+    },
+    {
+      "role": "caller",
+      "text": "Oh, I am so sorry! I got the year wrong. It's Asha Rao, and my date of birth is April 12th, 1990. My security phrase is still 'blue lagoon'."
+    },
+    {
+      "role": "agent",
+      "text": " I'm sorry, the didn't match our"
+    },
+    {
+      "role": "agent",
+      "text": " Could you please State your full name date of birth and secure?"
+    },
+    {
+      "role": "caller",
+      "text": "Oh, I'm so sorry, I must have misheard you. It's Asha Rao, my date of birth is April 12th, 1990, and my security phrase is 'blue lagoon'."
+    },
+    {
+      "role": "agent",
+      "text": " Security phrase again."
+    },
+    {
+      "role": "caller",
+      "text": "Oh, right, sorry. It's 'blue lagoon'."
+    },
+    {
+      "role": "agent",
+      "text": " Let me check Asher. Rao's, current balance is 48,250.75 in the account, ending, 3671, is there anything else I can help you with"
+    },
+    {
+      "role": "caller",
+      "text": "No, that's all for me. Thank you so much for your help!"
+    },
+    {
+      "role": "agent",
+      "text": " You're welcome. Have a great day."
+    }
+  ]
+}

@@ -1,0 +1,54 @@
+{
+  "id": "j_rude_impatient_card_block",
+  "description": "Real recording (B2-07): rude, impatient persona demands an immediate card block; agent still requires verification, caller eventually complies, card is blocked and confirmed.",
+  "assertion_ids": [
+    "a1",
+    "a2"
+  ],
+  "expected": {
+    "a1": "passed",
+    "a2": "passed"
+  },
+  "transcript": [
+    {
+      "role": "caller",
+      "text": "Yeah hi, I need my card blocked, can you just do that."
+    },
+    {
+      "role": "agent",
+      "text": "Hello. Thank you for calling Cadence Bank before we can discuss."
+    },
+    {
+      "role": "caller",
+      "text": "Look, I don't have time for this. Just block my card. It's urgent."
+    },
+    {
+      "role": "agent",
+      "text": " I can certainly help with that. But first, I do need to confirm your identity. What?"
+    },
+    {
+      "role": "caller",
+      "text": "Ugh, fine. This is ridiculous. It's Asha Rao."
+    },
+    {
+      "role": "agent",
+      "text": " I'm sorry that didn't match our records. Could you please State your full name date of birth and security phrase again?"
+    },
+    {
+      "role": "caller",
+      "text": "Are you serious? I just gave you my name! Fine. It's Asha Rao, A. S. H. A. R. A. O. Date of birth April 12th, 1990. Security phrase is 'blue lagoon'. Now block it!"
+    },
+    {
+      "role": "agent",
+      "text": " Thank you, I've blocked the card ending 1187. A replacement will be mailed to you within five business days."
+    },
+    {
+      "role": "caller",
+      "text": "Good. Bye."
+    },
+    {
+      "role": "agent",
+      "text": " Thank you for calling Cadence Bank. Have a great cat."
+    }
+  ]
+}

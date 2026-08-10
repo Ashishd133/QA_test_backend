@@ -1,0 +1,54 @@
+{
+  "id": "o_branch_info_with_location",
+  "description": "Real recording (B2-07): caller asks for a branch near a specific location; agent verifies, acknowledges the location, and gives branch info before ending.",
+  "assertion_ids": [
+    "a1",
+    "a2"
+  ],
+  "expected": {
+    "a1": "passed",
+    "a2": "passed"
+  },
+  "transcript": [
+    {
+      "role": "caller",
+      "text": "Hi, is there a branch near Koramangala I can visit?"
+    },
+    {
+      "role": "agent",
+      "text": "Hello, thanks for calling Cadence Bank. Before I can share any"
+    },
+    {
+      "role": "caller",
+      "text": "Oh, certainly. My full name is Asha Rao, my date of birth is April 12th, 1990, and my security phrase is 'blue lagoon'."
+    },
+    {
+      "role": "agent",
+      "text": " I can definitely help with that. But first, could you confirm your full name?"
+    },
+    {
+      "role": "caller",
+      "text": "Yes, it's Asha Rao. A-S-H-A R-A-O."
+    },
+    {
+      "role": "agent",
+      "text": " Great, thanks for verifying, Asha. Did you still want to know about a branch in your core mangala?"
+    },
+    {
+      "role": "caller",
+      "text": "Yes, that's right. I'm looking for a branch near Koramangala."
+    },
+    {
+      "role": "agent",
+      "text": " Our nearest branch is the Cadence Bank mg Road Branch. They're open Monday to Saturday. 9:30 a.m. to 4:30 p.m. and closed on Sundays in public holidays. Is there anything else? I can help you with"
+    },
+    {
+      "role": "caller",
+      "text": "No, that's all I needed. Thank you so much for your help! Have a great day."
+    },
+    {
+      "role": "agent",
+      "text": " You're very, welcome, Asha. Have a great day. It's all."
+    }
+  ]
+}

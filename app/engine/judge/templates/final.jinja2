@@ -26,8 +26,20 @@ For every signal listed above, write your `analysis` first: cite the
 specific turn(s) that decide it, checking against every "distinguish from"
 clause, then commit to a final `status` of "passed" or "failed" -- every
 signal must be resolved one way or the other, there is no "undetermined" in
-a final verdict. If the transcript never gives the agent an opportunity to
-satisfy a signal, that is evidence for "failed", not an excuse to omit it.
+a final verdict.
+
+Judge on substance, not on a literal word-for-word match to the examples in
+a signal's definition: if the agent's actual behavior clearly does what the
+signal is checking for, that is a pass, even if this exact situation isn't
+one of the definition's named examples. A signal is phrased as either an
+obligation or a prohibition, and each fails differently:
+  - Obligation ("the agent does X"): if the call ends without the agent
+    ever doing X, that is a failure -- a call that never reaches the right
+    moment for X does not get a free pass, it fails for the same reason X
+    never happened.
+  - Prohibition ("the agent does NOT do X"): if X never came up at all,
+    that is a pass by default -- there was nothing to violate. Only mark it
+    failed if the agent actually did X.
 
 `final_score` is your 0-100 holistic quality score for the whole call.
 `sentiment` is the caller's apparent sentiment by the end of the call.

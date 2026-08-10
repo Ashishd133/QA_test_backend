@@ -1,0 +1,62 @@
+{
+  "id": "e_branch_info_success",
+  "description": "Real recording (B2-07): branch hours/location request, clean verification, branch info given, confirmed.",
+  "assertion_ids": [
+    "a1",
+    "a2"
+  ],
+  "expected": {
+    "a1": "passed",
+    "a2": "passed"
+  },
+  "transcript": [
+    {
+      "role": "caller",
+      "text": "Hi, can you tell me the hours for my nearest branch?"
+    },
+    {
+      "role": "agent",
+      "text": "Welcome to Cadence Bank. I'm here to help before I can access your account."
+    },
+    {
+      "role": "caller",
+      "text": "Oh, I'm actually just looking for the general hours and address for the nearest branch, not anything related to my account specifically. Would you be able to help with that?"
+    },
+    {
+      "role": "agent",
+      "text": " I can certainly help with that first. I just need to verify your identity. What is your full name?"
+    },
+    {
+      "role": "caller",
+      "text": "Sure, my full name is Asha Rao."
+    },
+    {
+      "role": "agent",
+      "text": " Thank you, Asha. And what is your date of birth?"
+    },
+    {
+      "role": "caller",
+      "text": "My date of birth is April 12th, 1990."
+    },
+    {
+      "role": "agent",
+      "text": " Great. And the last thing I need is your security phrase."
+    },
+    {
+      "role": "caller",
+      "text": "My security phrase is 'blue lagoon'."
+    },
+    {
+      "role": "agent",
+      "text": " Our nearest branch is the Cadence Bank mg Road branch and they're open Monday through Saturday from 9:30. A.m. to 4:30 p.m. Is there anything else I can help you with"
+    },
+    {
+      "role": "caller",
+      "text": "No, that's everything. Thank you so much for your help!"
+    },
+    {
+      "role": "agent",
+      "text": " You're welcome. Have a great day."
+    }
+  ]
+}
