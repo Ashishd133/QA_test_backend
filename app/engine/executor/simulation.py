@@ -33,11 +33,9 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import uuid
 from typing import Literal
 
-from google.oauth2 import service_account
 from loguru import logger
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -57,10 +55,12 @@ from app.events import (
     status_event,
     turn_event,
 )
+from app.gcp_auth import load_google_oauth2_credentials
 from app.observability.tracing import get_tracer
 from app.schemas.runs import TranscriptTurn
 from app.usage import UsageTracker
 from app.workers.claim import ClaimedRun
+from app.workers.fake_runner import run_fake_script
 from app.workers.heartbeat import heartbeat_loop
 from app.workers.materialize import materialize_run
 
@@ -119,22 +119,27 @@ def _build_persona_spec(persona_name: str, script: object) -> PersonaSpec:
 
 async def _load_scenario(
     engine: AsyncEngine, scenario_id: uuid.UUID
-) -> tuple[PersonaSpec, list[AssertionSpec]]:
+) -> tuple[PersonaSpec, list[AssertionSpec], bool]:
+    """Third element: whether the scenario carried a real `script` (as
+    opposed to `_build_persona_spec`'s generic fallback content) -- see
+    `run_simulation`'s own use of it. Most scenarios (app/seed.py's
+    dashboard filler, e.g. "Card & Account Support") have none; only
+    scenarios meant to run against a real, live-registered agent do."""
     async with engine.connect() as conn:
         row = (await conn.execute(_SCENARIO_SQL, {"id": scenario_id})).mappings().first()
     if row is None:
         raise ValueError(f"scenario {scenario_id} not found")
-    return _build_persona_spec(row["persona"], row["script"]), _load_assertion_specs(
-        row["assertions"]
+    has_real_script = isinstance(row["script"], dict) and bool(row["script"])
+    return (
+        _build_persona_spec(row["persona"], row["script"]),
+        _load_assertion_specs(row["assertions"]),
+        has_real_script,
     )
 
 
 def _build_judge_client() -> GenAIClient:
     settings = get_settings()
-    creds_path = os.environ["GOOGLE_APPLICATION_CREDENTIALS"]
-    credentials = service_account.Credentials.from_service_account_file(  # type: ignore[no-untyped-call]
-        creds_path, scopes=["https://www.googleapis.com/auth/cloud-platform"]
-    )
+    credentials = load_google_oauth2_credentials()
     client = build_vertex_client(
         credentials=credentials,
         project=settings.google_cloud_project,
@@ -221,7 +226,9 @@ async def _run_simulation_body(engine: AsyncEngine, claimed: ClaimedRun) -> None
         return
 
     try:
-        persona_spec, assertion_specs = await _load_scenario(engine, claimed.scenario_id)
+        persona_spec, assertion_specs, has_real_script = await _load_scenario(
+            engine, claimed.scenario_id
+        )
     except Exception:
         logger.exception(f"failed to load scenario for run {run_id}")
         async with engine.connect() as conn, conn.begin():
@@ -239,6 +246,21 @@ async def _run_simulation_body(engine: AsyncEngine, claimed: ClaimedRun) -> None
                 ),
                 {"id": run_id},
             )
+        return
+
+    if not has_real_script:
+        # Dashboard-filler scenarios (app/seed.py: "Card & Account Support",
+        # "Billing & Payments") carry no real script/persona content and
+        # have no live agent worker behind them -- only
+        # scenario:reference:card-block (and anything else deliberately
+        # built for this executor) does. Routing those through a real
+        # persona-vs-agent call used to mean a ~180s hang waiting for an
+        # agent that will never join, then a low/zero score, instead of the
+        # instant scripted replay they're supposed to give the dashboard.
+        # FakeRunner owns status transitions from 'claimed' itself, so this
+        # must happen before this function's own status='running' write.
+        logger.info(f"scenario for run {run_id} has no real script -- delegating to FakeRunner")
+        await run_fake_script(engine, claimed)
         return
 
     async with engine.connect() as conn, conn.begin():

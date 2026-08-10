@@ -23,7 +23,6 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 from dotenv import load_dotenv
-from google.oauth2 import service_account
 from livekit import api
 from loguru import logger
 from pipecat.audio.vad.silero import SileroVADAnalyzer
@@ -45,6 +44,7 @@ from pipecat.workers.runner import WorkerRunner
 
 from app.engine.caller.latency_clock import LatencyClock, TurnLatency
 from app.engine.caller.persona import PersonaCaller, PersonaSpec, Turn
+from app.gcp_auth import google_credentials_kwargs, load_google_oauth2_credentials
 
 # The narrow subset of runs.end_reason (B2-06) that a persona-driven call
 # itself can determine: did the persona decide the call was done, did we
@@ -273,7 +273,6 @@ async def run_persona_call(
     url = os.environ["LIVEKIT_URL"]
     api_key = os.environ["LIVEKIT_API_KEY"]
     api_secret = os.environ["LIVEKIT_API_SECRET"]
-    creds_path = os.environ["GOOGLE_APPLICATION_CREDENTIALS"]
     project = os.environ["GOOGLE_CLOUD_PROJECT"]
     location = os.environ["GOOGLE_CLOUD_LOCATION"]
 
@@ -282,9 +281,7 @@ async def run_persona_call(
         token = _build_token(api_key, api_secret, room_name)
         logger.info(f"joining room {room_name!r} as cadence-caller (persona={persona.name!r})")
 
-        credentials = service_account.Credentials.from_service_account_file(  # type: ignore[no-untyped-call]
-            creds_path, scopes=["https://www.googleapis.com/auth/cloud-platform"]
-        )
+        credentials = load_google_oauth2_credentials()
         persona_caller = PersonaCaller(
             persona, credentials=credentials, project=project, location=location
         )
@@ -296,12 +293,15 @@ async def run_persona_call(
             params=LiveKitParams(audio_in_enabled=True, audio_out_enabled=True),
         )
 
+        google_credentials, google_credentials_path = google_credentials_kwargs()
         stt = GoogleSTTService(
-            credentials_path=creds_path,
+            credentials=google_credentials,
+            credentials_path=google_credentials_path,
             settings=GoogleSTTService.Settings(enable_word_time_offsets=True),
         )
         tts = GoogleTTSService(
-            credentials_path=creds_path,
+            credentials=google_credentials,
+            credentials_path=google_credentials_path,
             settings=GoogleTTSService.Settings(voice="en-US-Chirp3-HD-Charon"),
         )
         vad = VADProcessor(vad_analyzer=SileroVADAnalyzer())
