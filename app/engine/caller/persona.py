@@ -11,6 +11,7 @@ misbehaving reference agent could otherwise keep the model talking forever.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal
 
 from google import genai
 from google.auth.credentials import Credentials
@@ -46,7 +47,7 @@ class PersonaSpec:
 
 @dataclass(frozen=True)
 class Turn:
-    speaker: str  # "caller" | "agent"
+    speaker: Literal["caller", "agent"]
     text: str
 
 

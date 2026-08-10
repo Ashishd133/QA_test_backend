@@ -40,6 +40,10 @@ class AssertionData(EventData):
     name: str
     status: Literal["passed", "failed"]
     triggered_at_turn: int | None = None
+    # B2-08: the judge's own rationale for this verdict (AssertionFlip.
+    # rationale / FinalAssertionNote.note, app/engine/judge/models.py) --
+    # optional since FakeRunner's scripted assertion events never had one.
+    note: str | None = None
 
 
 class NodeData(EventData):

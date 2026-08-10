@@ -100,11 +100,16 @@ def assertion_event(
     name: str,
     status: Literal["passed", "failed"],
     triggered_at_turn: int | None = None,
+    note: str | None = None,
 ) -> Event:
     return Event(
         type="assertion",
         data=AssertionData(
-            assertion_id=assertion_id, name=name, status=status, triggered_at_turn=triggered_at_turn
+            assertion_id=assertion_id,
+            name=name,
+            status=status,
+            triggered_at_turn=triggered_at_turn,
+            note=note,
         ),
     )
 

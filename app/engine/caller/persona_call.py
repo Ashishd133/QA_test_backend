@@ -18,6 +18,9 @@ from __future__ import annotations
 import asyncio
 import os
 import uuid
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
+from typing import Literal
 
 from dotenv import load_dotenv
 from google.oauth2 import service_account
@@ -40,7 +43,18 @@ from pipecat.services.google.tts import GoogleTTSService
 from pipecat.transports.livekit.transport import LiveKitParams, LiveKitTransport
 from pipecat.workers.runner import WorkerRunner
 
+from app.engine.caller.latency_clock import LatencyClock, TurnLatency
 from app.engine.caller.persona import PersonaCaller, PersonaSpec, Turn
+
+# The narrow subset of runs.end_reason (B2-06) that a persona-driven call
+# itself can determine: did the persona decide the call was done, did we
+# have to force it via the turn/time safety cap, or did the executor ask us
+# to stop early via `cancel_event`. "completed"/"agent_ended"/"error" are
+# the B2-08 executor's own call, made with context this module doesn't have
+# (whether scoring itself succeeded).
+CallEndReason = Literal["caller_ended", "timeout", "cancelled"]
+
+OnTurn = Callable[[Turn], Awaitable[None]]
 
 load_dotenv()
 
@@ -75,16 +89,43 @@ class PersonaRunner(FrameProcessor):
     `ScriptRunner`: STT finalizes a chunk after the underlying audio/VAD event
     has already passed, so a debounced timer off the transcript stream is the
     reliable turn-boundary signal, not frame ordering.
+
+    `on_turn`, if given, is awaited synchronously (in transcript order) right
+    after each turn (caller or agent) is appended -- B2-08's executor uses
+    this to `emit()` a `turn` event live, as the call happens, rather than
+    only getting a full transcript back after the call ends (B2-04/B2-07's
+    usage). It's a fast DB insert, not a model call, so awaiting it inline
+    doesn't meaningfully stall the pipeline the way awaiting a judge call
+    here would -- callers that need to react to a turn with something slow
+    (e.g. B2-08's incremental judge) should fire that as their own
+    `asyncio.create_task` from inside their `on_turn`, not block it.
+
+    `cancel_event`, if given, is checked after every turn (both directions)
+    -- once set, the call ends on its next check exactly like hitting
+    MAX_TURNS, with `end_reason="cancelled"`. Checked after `on_turn`
+    rather than before: the turn that was already in flight when
+    cancellation was requested still gets recorded before the call stops,
+    same as `fake_runner.py` finishing emitting an in-progress event before
+    honoring a mid-script cancellation.
     """
 
-    def __init__(self, persona_caller: PersonaCaller) -> None:
+    def __init__(
+        self,
+        persona_caller: PersonaCaller,
+        *,
+        on_turn: OnTurn | None = None,
+        cancel_event: asyncio.Event | None = None,
+    ) -> None:
         super().__init__()
         self._persona_caller = persona_caller
+        self._on_turn = on_turn
+        self._cancel_event = cancel_event
         self._transcript: list[Turn] = []
         self._turns_taken = 0
         self._started = False
         self._done = False
         self._pending_advance: asyncio.Task[None] | None = None
+        self.end_reason: CallEndReason | None = None
 
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
         await super().process_frame(frame, direction)
@@ -99,11 +140,25 @@ class PersonaRunner(FrameProcessor):
         if isinstance(frame, TranscriptionFrame):
             logger.info(f"[reference agent said] {frame.text}")
             await self.push_frame(frame, direction)
-            self._transcript.append(Turn(speaker="agent", text=frame.text))
+            turn = Turn(speaker="agent", text=frame.text)
+            self._transcript.append(turn)
+            if self._on_turn is not None:
+                await self._on_turn(turn)
+            if await self._maybe_end_for_cancellation():
+                return
             self._schedule_advance(TURN_GAP_SECS)
             return
 
         await self.push_frame(frame, direction)
+
+    async def _maybe_end_for_cancellation(self) -> bool:
+        if self._done or self._cancel_event is None or not self._cancel_event.is_set():
+            return False
+        logger.info("cancellation requested, ending call")
+        self._done = True
+        self.end_reason = "cancelled"
+        await self.push_frame(EndFrame())
+        return True
 
     def _schedule_advance(self, delay: float) -> None:
         if self._done:
@@ -117,23 +172,32 @@ class PersonaRunner(FrameProcessor):
         await self._speak_next()
 
     async def _speak_next(self) -> None:
+        if await self._maybe_end_for_cancellation():
+            return
         if self._done:
             return
         if self._turns_taken >= MAX_TURNS:
             logger.warning(f"persona call hit MAX_TURNS={MAX_TURNS}, ending call")
             self._done = True
+            self.end_reason = "timeout"
             await self.push_frame(EndFrame())
             return
 
         result = await self._persona_caller.next_turn(self._transcript)
         self._turns_taken += 1
-        self._transcript.append(Turn(speaker="caller", text=result.utterance))
+        turn = Turn(speaker="caller", text=result.utterance)
+        self._transcript.append(turn)
         logger.info(f"[caller says] {result.utterance}")
+        if self._on_turn is not None:
+            await self._on_turn(turn)
+        if await self._maybe_end_for_cancellation():
+            return
         await self.push_frame(TTSSpeakFrame(text=result.utterance))
 
         if result.call_complete:
             logger.info("persona LLM signalled call_complete, ending call")
             self._done = True
+            self.end_reason = "caller_ended"
             await self.push_frame(EndFrame())
 
     @property
@@ -152,13 +216,48 @@ def _build_token(api_key: str, api_secret: str, room: str) -> str:
     )
 
 
-async def run_persona_call(persona: PersonaSpec) -> list[Turn]:
+@dataclass(frozen=True)
+class PersonaCallResult:
+    transcript: list[Turn]
+    # None only if the call never got far enough for PersonaRunner to reach
+    # a natural end AND the outer RUN_TIMEOUT_SECS wrapper is what actually
+    # cut it off -- treated the same as "timeout" by every caller, but kept
+    # honest about which layer made the call rather than silently
+    # defaulting one specific reason onto both.
+    end_reason: CallEndReason
+    turn_latencies: list[TurnLatency] = field(default_factory=list)
+    interruption_count: int = 0
+
+
+async def run_persona_call(
+    persona: PersonaSpec,
+    *,
+    on_turn: OnTurn | None = None,
+    latency_clock: LatencyClock | None = None,
+    cancel_event: asyncio.Event | None = None,
+) -> PersonaCallResult:
     """Runs one full call against whatever reference agent is currently
     registered with the LiveKit project (see this module's docstring), drives
-    it with `persona`, and returns the resulting transcript. Extracted from
-    the original single-persona `main()` (B2-04) so B2-07's
-    `scripts/record_eval_transcripts.py` can drive many personas back to
-    back without duplicating the pipeline wiring.
+    it with `persona`, and returns the resulting transcript plus why the call
+    ended and its measured per-turn latencies. Extracted from the original
+    single-persona `main()` (B2-04) so B2-07's `scripts/record_eval_transcripts.py`
+    and B2-08's simulation executor can drive calls without duplicating the
+    pipeline wiring.
+
+    `on_turn`: see `PersonaRunner`'s docstring -- awaited live, in order, as
+    each turn happens. Omit it (B2-04/B2-07's usage) to just get the full
+    transcript back at the end.
+
+    `latency_clock`: pass one in (rather than letting this construct its own
+    private one) if the caller needs to read `clock.turn_latencies` live,
+    during the call, from inside its own `on_turn` -- B2-08's executor does
+    this to put real `latency_ms` on each `turn` event as it emits it,
+    rather than only having latencies available after the whole call ends.
+
+    `cancel_event`: checked by `PersonaRunner` after every turn -- B2-08's
+    executor sets this from a concurrent poll of `runs.status` to stop a
+    call early on user cancellation, the same "checked every turn" contract
+    `fake_runner.py` implements for scripted runs (spine §5).
     """
     url = os.environ["LIVEKIT_URL"]
     api_key = os.environ["LIVEKIT_API_KEY"]
@@ -194,10 +293,11 @@ async def run_persona_call(persona: PersonaSpec) -> list[Turn]:
         settings=GoogleTTSService.Settings(voice="en-US-Chirp3-HD-Charon"),
     )
     vad = VADProcessor(vad_analyzer=SileroVADAnalyzer())
-    persona_runner = PersonaRunner(persona_caller)
+    persona_runner = PersonaRunner(persona_caller, on_turn=on_turn, cancel_event=cancel_event)
+    clock = latency_clock if latency_clock is not None else LatencyClock()
 
     pipeline = Pipeline([transport.input(), vad, stt, persona_runner, tts, transport.output()])
-    worker = PipelineWorker(pipeline)
+    worker = PipelineWorker(pipeline, observers=[clock])
     runner = WorkerRunner()
 
     try:
@@ -206,7 +306,12 @@ async def run_persona_call(persona: PersonaSpec) -> list[Turn]:
         logger.error("persona call timed out")
         await worker.cancel()
 
-    return persona_runner.transcript
+    return PersonaCallResult(
+        transcript=persona_runner.transcript,
+        end_reason=persona_runner.end_reason or "timeout",
+        turn_latencies=clock.turn_latencies,
+        interruption_count=clock.interruption_count,
+    )
 
 
 async def main() -> None:

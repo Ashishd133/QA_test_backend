@@ -36,6 +36,7 @@ def test_assertion_event_serializes_camel_case() -> None:
         "name": "States card-block timeline",
         "status": "passed",
         "triggeredAtTurn": 8,
+        "note": None,
     }
 
 

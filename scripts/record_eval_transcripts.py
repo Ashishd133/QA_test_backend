@@ -175,10 +175,11 @@ async def main() -> None:
     for persona in PERSONAS:
         logger.info(f"=== recording {persona.name} ===")
         try:
-            transcript = await run_persona_call(persona)
+            result = await run_persona_call(persona)
         except Exception:
             logger.exception(f"{persona.name} failed, skipping")
             continue
+        transcript = result.transcript
         results[persona.name] = [_turn_to_dict(t) for t in transcript]
         logger.info(f"=== {persona.name}: {len(transcript)} turns ===")
         for t in transcript:

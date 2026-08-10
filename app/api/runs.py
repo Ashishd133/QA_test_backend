@@ -287,10 +287,20 @@ def _reduce_events(
             if isinstance(latency_ms, int | float):
                 latency_series.append(float(latency_ms))
         elif row["type"] == "assertion":
-            triggered_at_turn = data.get("triggeredAtTurn")
-            detail = (
-                f"Triggered at turn {triggered_at_turn}" if triggered_at_turn is not None else ""
-            )
+            # B2-08: prefer the judge's own rationale (assertion_event's
+            # `note`) over the generic turn-trigger phrase -- FakeRunner's
+            # scripted assertion events never carry one, so this falls back
+            # to the old behavior for those.
+            note = data.get("note")
+            if note:
+                detail = note
+            else:
+                triggered_at_turn = data.get("triggeredAtTurn")
+                detail = (
+                    f"Triggered at turn {triggered_at_turn}"
+                    if triggered_at_turn is not None
+                    else ""
+                )
             assertions_by_id[data["assertionId"]] = ResultAssertion(
                 text=data["name"],
                 detail=detail,
