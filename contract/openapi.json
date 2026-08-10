@@ -1131,6 +1131,17 @@
             ],
             "title": "Projectid"
           },
+          "recordingUrl": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recordingurl"
+          },
           "resultAssertions": {
             "items": {
               "$ref": "#/components/schemas/ResultAssertion"

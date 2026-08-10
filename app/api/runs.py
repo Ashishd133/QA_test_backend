@@ -16,6 +16,7 @@ from app.db import get_engine
 from app.deps import require_user_id
 from app.errors import APIError
 from app.formatting import format_duration
+from app.gcp_auth import signed_recording_url
 from app.schemas.runs import (
     DashboardRunRow,
     DiscoveryRunCreate,
@@ -246,7 +247,7 @@ async def list_runs(
 
 _RUN_DETAIL_SQL = text(
     "SELECT r.id, r.type, r.status, r.metrics, r.created_at, r.started_at, r.ended_at, "
-    "       r.project_id, r.end_reason, r.cost, "
+    "       r.project_id, r.end_reason, r.cost, r.recording_url, "
     "       a.name AS agent_name, a.transport, a.language, "
     "       sc.name AS scenario_name, s.name AS suite_name "
     "FROM runs r "
@@ -344,6 +345,9 @@ async def get_run(run_id: uuid.UUID, engine: AsyncEngine = Depends(get_engine)) 
         project_id=str(row["project_id"]) if row["project_id"] is not None else None,
         end_reason=row["end_reason"],
         cost=_run_cost(row["cost"]),
+        recording_url=(
+            signed_recording_url(row["recording_url"]) if row["recording_url"] else None
+        ),
         created_at=_isoformat(row["created_at"]),
         transcript=transcript,
         result_assertions=result_assertions,

@@ -44,6 +44,7 @@ from pipecat.workers.runner import WorkerRunner
 
 from app.engine.caller.latency_clock import LatencyClock, TurnLatency
 from app.engine.caller.persona import PersonaCaller, PersonaSpec, Turn
+from app.engine.caller.recording import start_room_recording, stop_room_recording
 from app.gcp_auth import google_credentials_kwargs, load_google_oauth2_credentials
 
 # The narrow subset of runs.end_reason (B2-06) that a persona-driven call
@@ -227,6 +228,10 @@ class PersonaCallResult:
     end_reason: CallEndReason
     turn_latencies: list[TurnLatency] = field(default_factory=list)
     interruption_count: int = 0
+    # gs://... URI if RECORDING_GCS_BUCKET is configured (app.engine.caller.
+    # recording), else None -- a missing bucket is a deliberate no-op, not
+    # a reason this call itself should fail.
+    recording_url: str | None = None
 
 
 async def run_persona_call(
@@ -317,17 +322,36 @@ async def run_persona_call(
         )
         runner = WorkerRunner()
 
+        # Fired concurrently with the join below rather than awaited first --
+        # a slow/failing egress-start call should never delay the persona's
+        # opening line. Recording is opt-in (RECORDING_GCS_BUCKET) and
+        # best-effort either way; see app.engine.caller.recording.
+        recording_task = asyncio.create_task(
+            start_room_recording(
+                url=url, api_key=api_key, api_secret=api_secret, room_name=room_name
+            )
+        )
+
         try:
             await asyncio.wait_for(runner.run(worker), timeout=RUN_TIMEOUT_SECS)
         except TimeoutError:
             logger.error("persona call timed out")
             await worker.cancel()
 
+        recording_url: str | None = None
+        recording_info = await recording_task
+        if recording_info is not None:
+            egress_id, recording_url = recording_info
+            await stop_room_recording(
+                url=url, api_key=api_key, api_secret=api_secret, egress_id=egress_id
+            )
+
         return PersonaCallResult(
             transcript=persona_runner.transcript,
             end_reason=persona_runner.end_reason or "timeout",
             turn_latencies=clock.turn_latencies,
             interruption_count=clock.interruption_count,
+            recording_url=recording_url,
         )
 
 

@@ -497,13 +497,15 @@ async def _run_simulation_traced(
                         text(
                             "UPDATE runs SET status = 'cancelled', ended_at = now(), "
                             "metrics = CAST(:metrics AS jsonb), end_reason = :end_reason, "
-                            "cost = CAST(:cost AS jsonb) WHERE id = :id"
+                            "cost = CAST(:cost AS jsonb), recording_url = :recording_url "
+                            "WHERE id = :id"
                         ),
                         {
                             "id": run_id,
                             "metrics": json.dumps(metrics),
                             "end_reason": end_reason,
                             "cost": json.dumps(usage.as_dict()),
+                            "recording_url": result.recording_url,
                         },
                     )
                 return
@@ -563,13 +565,15 @@ async def _run_simulation_traced(
                     text(
                         "UPDATE runs SET status = 'completed', ended_at = now(), "
                         "metrics = CAST(:metrics AS jsonb), end_reason = :end_reason, "
-                        "cost = CAST(:cost AS jsonb) WHERE id = :id"
+                        "cost = CAST(:cost AS jsonb), recording_url = :recording_url "
+                        "WHERE id = :id"
                     ),
                     {
                         "id": run_id,
                         "metrics": json.dumps(metrics),
                         "end_reason": end_reason,
                         "cost": json.dumps(usage.as_dict()),
+                        "recording_url": result.recording_url,
                     },
                 )
         except Exception:

@@ -81,6 +81,10 @@ class RunDetail(APIModel):
     project_id: str | None = None
     end_reason: EndReason | None = None
     cost: RunCost | None = None
+    # gs://... URI, playable via a signed URL generated on read (see
+    # app/api/runs.py's get_run) -- null unless RECORDING_GCS_BUCKET is
+    # configured server-side (app.engine.caller.recording).
+    recording_url: str | None = None
     created_at: str
     transcript: list[TranscriptTurn]
     result_assertions: list[ResultAssertion]
