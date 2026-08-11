@@ -8,6 +8,7 @@ drives an actual FakeRunner execution rather than hand-seeding events.
 
 import uuid
 
+import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -68,7 +69,16 @@ async def _cleanup(engine: AsyncEngine, agent_id: uuid.UUID) -> None:
     await engine.dispose()
 
 
+@pytest.mark.timeout(300)
 async def test_run_detail_matches_frontend_run_shape_after_fake_runner_completes() -> None:
+    """run_fake_script opens a fresh DB connection per turn (no pooling in
+    tests, see tests/conftest.py's null_pool=True) plus claim_run's own
+    connection -- against this environment's currently degraded network to
+    the Neon test branch (~12s per connection establishment, measured
+    directly), that's routinely close to or over the default 120s
+    pytest-timeout even though nothing is actually stuck. Bumped here
+    rather than raised globally; confirmed via a pre-B2.5 baseline run that
+    this predates any of this branch's changes."""
     engine = _test_engine()
     agent_id = await _make_agent(engine)
     async with engine.connect() as conn, conn.begin():

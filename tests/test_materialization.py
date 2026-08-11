@@ -12,6 +12,7 @@ import asyncio
 import uuid
 from typing import Any
 
+import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
 from sqlalchemy.engine import RowMapping
@@ -134,7 +135,13 @@ async def _materialized_rows(
     return list(turn_rows), list(assertion_rows)
 
 
+@pytest.mark.timeout(300)
 async def test_materialized_tables_match_reduce_from_events_after_completion() -> None:
+    """Same rationale as test_runs_read.py's identical marker: run_fake_script
+    opens a fresh DB connection per turn (no pooling in tests), and against
+    this environment's degraded network to the Neon test branch that's
+    routinely close to or over the default 120s pytest-timeout with nothing
+    actually stuck. Confirmed pre-existing via a pre-B2.5 baseline run."""
     engine = _test_engine()
     agent_id = await _make_agent(engine)
     await _make_queued_run(engine, agent_id)
