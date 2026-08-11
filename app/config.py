@@ -21,6 +21,11 @@ class Settings(BaseSettings):
     # (a service account key), which google-auth picks up automatically.
     google_cloud_project: str = ""
     google_cloud_location: str = "us-central1"
+    # B2.6-01: hard cap on one suite-run fan-out's child count. Guards
+    # against queueing thousands of rows from a suite × persona cross
+    # product before persona/condition-profile expansion even lands
+    # (currently just len(scenario_ids), since those are 422'd non-empty).
+    suite_run_batch_cap: int = 500
 
 
 @lru_cache

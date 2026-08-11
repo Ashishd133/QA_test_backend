@@ -82,3 +82,22 @@ class ScenarioUpdate(APIModel):
     persona: str | None = None
     script: dict[str, object] | None = None
     assertions: list[object] | None = None
+
+
+class SuiteRunCreate(APIModel):
+    """B2.6-01. `scenario_ids` omitted/None means "every scenario in the
+    suite". `persona_ids`/`condition_profile_ids` are accepted on the wire
+    now (the frontend backlog's W2.6-01 run-config modal already builds
+    against them) but rejected with 422 `not_supported` if non-empty until
+    B2.7 wires personas/condition profiles to scenarios -- shape stable,
+    behavior honest, no silently-dropped input."""
+
+    agent_id: str
+    scenario_ids: list[str] | None = None
+    persona_ids: list[str] | None = None
+    condition_profile_ids: list[str] | None = None
+
+
+class SuiteRunCreateResponse(APIModel):
+    parent_run_id: str
+    call_count: int

@@ -4,11 +4,12 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, Response, status
+from fastapi import APIRouter, Depends, Header, Response, status
 from sqlalchemy import bindparam, text
 from sqlalchemy.engine import RowMapping
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
+from app.config import get_settings
 from app.db import get_engine
 from app.deps import ensure_project_match, require_project_id, require_user_id
 from app.errors import APIError
@@ -20,6 +21,8 @@ from app.schemas.suites import (
     SuiteCreate,
     SuiteDetail,
     SuiteListItem,
+    SuiteRunCreate,
+    SuiteRunCreateResponse,
     SuiteUpdate,
 )
 from app.verdict import Verdict, format_score, verdict_for_run
@@ -324,6 +327,203 @@ async def delete_suite(
         )
         if result.rowcount == 0:
             raise APIError("not_found", "suite not found", status.HTTP_404_NOT_FOUND)
+
+
+_SCENARIO_IDS_FOR_SUITE_SQL = text(
+    "SELECT id FROM scenarios WHERE suite_id = :suite_id AND id IN :ids"
+).bindparams(bindparam("ids", expanding=True))
+
+_ALL_SCENARIO_IDS_FOR_SUITE_SQL = text(
+    "SELECT id FROM scenarios WHERE suite_id = :suite_id ORDER BY created_at"
+)
+
+# B2.6-01: parent carries the Idempotency-Key; ON CONFLICT DO NOTHING mirrors
+# app.api.runs._INSERT_RUN_SQL exactly, same composite UNIQUE(project_id,
+# idempotency_key) from migration 005. Children (below) get no key of their
+# own -- stamping the same key onto every child would collide with each
+# other on the very first insert.
+_INSERT_SUITE_PARENT_SQL = text(
+    "INSERT INTO runs (id, project_id, type, agent_id, config, idempotency_key, "
+    " created_by_user_id) "
+    "VALUES (:id, :project_id, 'suite', :agent_id, CAST(:config AS jsonb), :idempotency_key, "
+    " :user_id) "
+    "ON CONFLICT (project_id, idempotency_key) DO NOTHING "
+    "RETURNING id"
+)
+
+_EXISTING_SUITE_PARENT_BY_KEY_SQL = text(
+    "SELECT id FROM runs WHERE project_id = :project_id AND idempotency_key = :key"
+)
+
+_CHILD_COUNT_SQL = text("SELECT count(*) FROM runs WHERE parent_run_id = :parent_id")
+
+# type='simulation' (not 'suite') -- these are real single-scenario
+# simulation runs and must dispatch through the real executor
+# (app.workers.executors.EXECUTORS["simulation"] = run_simulation), exactly
+# like a call created via POST /v1/simulations/runs. parent_run_id is what
+# makes them Calls under the 'suite' parent rather than standalone Test
+# Runs (B2.5-03), and what excludes the parent itself from claim.py's
+# candidate scan (B3-03: "childless" claimability).
+_INSERT_CHILD_RUN_SQL = text(
+    "INSERT INTO runs (id, project_id, type, agent_id, scenario_id, parent_run_id, config, "
+    " created_by_user_id) "
+    "VALUES (:id, :project_id, 'simulation', :agent_id, :scenario_id, :parent_run_id, "
+    " CAST(:config AS jsonb), :user_id)"
+)
+
+
+@router.post(
+    "/v1/suites/{suite_id}/run",
+    response_model=SuiteRunCreateResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def run_suite(
+    suite_id: uuid.UUID,
+    body: SuiteRunCreate,
+    user_id: str = Depends(require_user_id),
+    project_id: uuid.UUID = Depends(require_project_id),
+    engine: AsyncEngine = Depends(get_engine),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> SuiteRunCreateResponse:
+    """B2.6-01: one parent (`type='suite'`) + the child cross-product, all in
+    one transaction. Currently the cross-product is just `scenarioIds` --
+    personaIds/conditionProfileIds are 422'd below until B2.7 wires them to
+    scenarios, rather than silently accepted and dropped.
+    """
+    agent_id = _parse_uuid(body.agent_id, "agentId")
+
+    if body.persona_ids or body.condition_profile_ids:
+        raise APIError(
+            "not_supported",
+            "personaIds/conditionProfileIds are not supported yet -- omit them "
+            "or pass an empty list",
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+        )
+    if body.scenario_ids is not None and not body.scenario_ids:
+        raise APIError(
+            "validation_error",
+            "scenarioIds must not be empty when provided -- omit it to run every scenario",
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+        )
+
+    async with engine.connect() as conn, conn.begin():
+        suite_row = (
+            (
+                await conn.execute(
+                    text("SELECT project_id FROM suites WHERE id = :id"), {"id": suite_id}
+                )
+            )
+            .mappings()
+            .first()
+        )
+        if suite_row is None:
+            raise APIError("not_found", "suite not found", status.HTTP_404_NOT_FOUND)
+        ensure_project_match(suite_row["project_id"], project_id)
+        # Deliberately decoupled from the suite's own configured agent --
+        # the batch's agentId is an explicit body field (backlog: run a
+        # suite against a different agent variant than the one it's
+        # authored against).
+        await _fetch_agent_in_project(conn, agent_id, project_id)
+
+        if body.scenario_ids is not None:
+            requested_ids = [_parse_uuid(sid, "scenarioIds") for sid in body.scenario_ids]
+            found_ids = set(
+                (
+                    await conn.execute(
+                        _SCENARIO_IDS_FOR_SUITE_SQL,
+                        {"suite_id": suite_id, "ids": requested_ids},
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            if found_ids != set(requested_ids):
+                raise APIError(
+                    "not_found",
+                    "one or more scenarioIds were not found in this suite",
+                    status.HTTP_404_NOT_FOUND,
+                )
+            scenario_ids = requested_ids
+        else:
+            scenario_ids = list(
+                (
+                    await conn.execute(_ALL_SCENARIO_IDS_FOR_SUITE_SQL, {"suite_id": suite_id})
+                )
+                .scalars()
+                .all()
+            )
+        if not scenario_ids:
+            raise APIError(
+                "validation_error",
+                "suite has no scenarios to run",
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+            )
+
+        cap = get_settings().suite_run_batch_cap
+        if len(scenario_ids) > cap:
+            raise APIError(
+                "batch_too_large",
+                f"this run would queue {len(scenario_ids)} calls, over the "
+                f"cap of {cap}",
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+            )
+
+        parent_id = uuid.uuid4()
+        inserted = (
+            (
+                await conn.execute(
+                    _INSERT_SUITE_PARENT_SQL,
+                    {
+                        "id": parent_id,
+                        "project_id": project_id,
+                        "agent_id": agent_id,
+                        "config": json.dumps({"scenarioIds": [str(sid) for sid in scenario_ids]}),
+                        "idempotency_key": idempotency_key,
+                        "user_id": user_id,
+                    },
+                )
+            )
+            .mappings()
+            .first()
+        )
+        if inserted is None:
+            # Idempotent replay: Idempotency-Key already names a parent from
+            # an earlier call to this endpoint (same project) -- return its
+            # real child count rather than queueing a second batch.
+            existing = (
+                (
+                    await conn.execute(
+                        _EXISTING_SUITE_PARENT_BY_KEY_SQL,
+                        {"project_id": project_id, "key": idempotency_key},
+                    )
+                )
+                .mappings()
+                .one()
+            )
+            existing_id = uuid.UUID(str(existing["id"]))
+            call_count = (
+                await conn.execute(_CHILD_COUNT_SQL, {"parent_id": existing_id})
+            ).scalar_one()
+            return SuiteRunCreateResponse(parent_run_id=str(existing_id), call_count=call_count)
+
+        child_ids = [uuid.uuid4() for _ in scenario_ids]
+        await conn.execute(
+            _INSERT_CHILD_RUN_SQL,
+            [
+                {
+                    "id": child_id,
+                    "project_id": project_id,
+                    "agent_id": agent_id,
+                    "scenario_id": scenario_id,
+                    "parent_run_id": parent_id,
+                    "config": json.dumps({}),
+                    "user_id": user_id,
+                }
+                for child_id, scenario_id in zip(child_ids, scenario_ids, strict=True)
+            ],
+        )
+
+    return SuiteRunCreateResponse(parent_run_id=str(parent_id), call_count=len(scenario_ids))
 
 
 @router.post(

@@ -1938,6 +1938,80 @@
         "title": "SuiteListItem",
         "type": "object"
       },
+      "SuiteRunCreate": {
+        "description": "B2.6-01. `scenario_ids` omitted/None means \"every scenario in the\nsuite\". `persona_ids`/`condition_profile_ids` are accepted on the wire\nnow (the frontend backlog's W2.6-01 run-config modal already builds\nagainst them) but rejected with 422 `not_supported` if non-empty until\nB2.7 wires personas/condition profiles to scenarios -- shape stable,\nbehavior honest, no silently-dropped input.",
+        "properties": {
+          "agentId": {
+            "title": "Agentid",
+            "type": "string"
+          },
+          "conditionProfileIds": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Conditionprofileids"
+          },
+          "personaIds": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Personaids"
+          },
+          "scenarioIds": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scenarioids"
+          }
+        },
+        "required": [
+          "agentId"
+        ],
+        "title": "SuiteRunCreate",
+        "type": "object"
+      },
+      "SuiteRunCreateResponse": {
+        "properties": {
+          "callCount": {
+            "title": "Callcount",
+            "type": "integer"
+          },
+          "parentRunId": {
+            "title": "Parentrunid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "parentRunId",
+          "callCount"
+        ],
+        "title": "SuiteRunCreateResponse",
+        "type": "object"
+      },
       "SuiteUpdate": {
         "properties": {
           "agentId": {
@@ -3560,6 +3634,76 @@
           }
         },
         "summary": "Update Suite",
+        "tags": [
+          "suites"
+        ]
+      }
+    },
+    "/v1/suites/{suite_id}/run": {
+      "post": {
+        "description": "B2.6-01: one parent (`type='suite'`) + the child cross-product, all in\none transaction. Currently the cross-product is just `scenarioIds` --\npersonaIds/conditionProfileIds are 422'd below until B2.7 wires them to\nscenarios, rather than silently accepted and dropped.",
+        "operationId": "run_suite",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "suite_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Suite Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SuiteRunCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuiteRunCreateResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Run Suite",
         "tags": [
           "suites"
         ]
