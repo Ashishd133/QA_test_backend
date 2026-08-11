@@ -54,5 +54,9 @@ class ServiceTokenMiddleware:
         scope.setdefault("state", {})
         scope["state"]["user_id"] = request.headers.get("x-user-id")
         scope["state"]["user_email"] = request.headers.get("x-user-email")
+        # B2.5-01: parsed here, same as x-user-id, but NOT enforced here --
+        # not every route is project-scoped (see app.deps.require_project_id
+        # for the routes that are, and its docstring for the exemption list).
+        scope["state"]["project_id"] = request.headers.get("x-project-id")
 
         await self.app(scope, receive, send)

@@ -7,10 +7,10 @@ from typing import Any
 from fastapi import APIRouter, Depends, Response, status
 from sqlalchemy import bindparam, text
 from sqlalchemy.engine import RowMapping
-from sqlalchemy.ext.asyncio import AsyncEngine
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from app.db import get_engine
-from app.deps import require_user_id
+from app.deps import ensure_project_match, require_project_id, require_user_id
 from app.errors import APIError
 from app.formatting import relative_time
 from app.schemas.suites import (
@@ -109,6 +109,7 @@ def _suite_list_item(
     last_run = max(run_times) if run_times else None
     return SuiteListItem(
         id=str(suite_row["id"]),
+        project_id=str(suite_row["project_id"]),
         name=suite_row["name"],
         desc=suite_row["description"] or "",
         agent=suite_row["agent_name"],
@@ -120,15 +121,18 @@ def _suite_list_item(
 
 
 _SUITES_SQL = text(
-    "SELECT s.id, s.name, s.description, a.name AS agent_name "
+    "SELECT s.id, s.project_id, s.name, s.description, a.name AS agent_name "
     "FROM suites s JOIN agents a ON a.id = s.agent_id "
+    "WHERE s.project_id = :project_id "
     "ORDER BY s.created_at"
 )
-_SCENARIOS_ALL_SQL = text(
-    "SELECT id, suite_id, name, persona, assertions FROM scenarios ORDER BY suite_id, created_at"
+_SCENARIOS_FOR_PROJECT_SQL = text(
+    "SELECT sc.id, sc.suite_id, sc.name, sc.persona, sc.assertions FROM scenarios sc "
+    "JOIN suites s ON s.id = sc.suite_id "
+    "WHERE s.project_id = :project_id ORDER BY sc.suite_id, sc.created_at"
 )
 _SUITE_BY_ID_SQL = text(
-    "SELECT s.id, s.name, s.description, a.name AS agent_name "
+    "SELECT s.id, s.project_id, s.name, s.description, a.name AS agent_name "
     "FROM suites s JOIN agents a ON a.id = s.agent_id WHERE s.id = :id"
 )
 _SCENARIOS_FOR_SUITE_SQL = text(
@@ -138,10 +142,17 @@ _SCENARIOS_FOR_SUITE_SQL = text(
 
 
 @router.get("/v1/suites", response_model=list[SuiteListItem])
-async def list_suites(engine: AsyncEngine = Depends(get_engine)) -> list[SuiteListItem]:
+async def list_suites(
+    project_id: uuid.UUID = Depends(require_project_id),
+    engine: AsyncEngine = Depends(get_engine),
+) -> list[SuiteListItem]:
     async with engine.connect() as conn:
-        suites = (await conn.execute(_SUITES_SQL)).mappings().all()
-        scenarios = (await conn.execute(_SCENARIOS_ALL_SQL)).mappings().all()
+        suites = (await conn.execute(_SUITES_SQL, {"project_id": project_id})).mappings().all()
+        scenarios = (
+            (await conn.execute(_SCENARIOS_FOR_PROJECT_SQL, {"project_id": project_id}))
+            .mappings()
+            .all()
+        )
 
     scenarios_by_suite: dict[uuid.UUID, list[uuid.UUID]] = {}
     for row in scenarios:
@@ -167,31 +178,49 @@ def _parse_uuid(value: str, field: str) -> uuid.UUID:
         ) from exc
 
 
+async def _fetch_agent_in_project(
+    conn: AsyncConnection, agent_id: uuid.UUID, project_id: uuid.UUID
+) -> RowMapping:
+    """A suite's agent must live in the same project (B2.5-01: hard
+    scoping) -- looking it up unscoped would let a suite silently
+    cross-reference another project's agent."""
+    agent_row = (
+        (
+            await conn.execute(
+                text("SELECT name FROM agents WHERE id = :id AND project_id = :project_id"),
+                {"id": agent_id, "project_id": project_id},
+            )
+        )
+        .mappings()
+        .first()
+    )
+    if agent_row is None:
+        raise APIError("not_found", "agent not found", status.HTTP_404_NOT_FOUND)
+    return agent_row
+
+
 @router.post("/v1/suites", response_model=SuiteListItem, status_code=status.HTTP_201_CREATED)
 async def create_suite(
     body: SuiteCreate,
     user_id: str = Depends(require_user_id),
+    project_id: uuid.UUID = Depends(require_project_id),
     engine: AsyncEngine = Depends(get_engine),
 ) -> SuiteListItem:
     agent_id = _parse_uuid(body.agent_id, "agentId")
     async with engine.connect() as conn, conn.begin():
-        agent_row = (
-            (await conn.execute(text("SELECT name FROM agents WHERE id = :id"), {"id": agent_id}))
-            .mappings()
-            .first()
-        )
-        if agent_row is None:
-            raise APIError("not_found", "agent not found", status.HTTP_404_NOT_FOUND)
+        agent_row = await _fetch_agent_in_project(conn, agent_id, project_id)
         row = (
             (
                 await conn.execute(
                     text(
-                        "INSERT INTO suites (id, name, description, agent_id, created_by_user_id) "
-                        "VALUES (:id, :name, :description, :agent_id, :user_id) "
-                        "RETURNING id, name, description"
+                        "INSERT INTO suites "
+                        "(id, project_id, name, description, agent_id, created_by_user_id) "
+                        "VALUES (:id, :project_id, :name, :description, :agent_id, :user_id) "
+                        "RETURNING id, project_id, name, description"
                     ),
                     {
                         "id": uuid.uuid4(),
+                        "project_id": project_id,
                         "name": body.name,
                         "description": body.description,
                         "agent_id": agent_id,
@@ -204,6 +233,7 @@ async def create_suite(
         )
     return SuiteListItem(
         id=str(row["id"]),
+        project_id=str(row["project_id"]),
         name=row["name"],
         desc=row["description"] or "",
         agent=agent_row["name"],
@@ -215,11 +245,16 @@ async def create_suite(
 
 
 @router.get("/v1/suites/{suite_id}", response_model=SuiteDetail)
-async def get_suite(suite_id: uuid.UUID, engine: AsyncEngine = Depends(get_engine)) -> SuiteDetail:
+async def get_suite(
+    suite_id: uuid.UUID,
+    project_id: uuid.UUID = Depends(require_project_id),
+    engine: AsyncEngine = Depends(get_engine),
+) -> SuiteDetail:
     async with engine.connect() as conn:
         suite_row = (await conn.execute(_SUITE_BY_ID_SQL, {"id": suite_id})).mappings().first()
         if suite_row is None:
             raise APIError("not_found", "suite not found", status.HTTP_404_NOT_FOUND)
+        ensure_project_match(suite_row["project_id"], project_id)
         scenario_rows = (
             (await conn.execute(_SCENARIOS_FOR_SUITE_SQL, {"suite_id": suite_id})).mappings().all()
         )
@@ -240,6 +275,7 @@ async def update_suite(
     suite_id: uuid.UUID,
     body: SuiteUpdate,
     user_id: str = Depends(require_user_id),
+    project_id: uuid.UUID = Depends(require_project_id),
     engine: AsyncEngine = Depends(get_engine),
 ) -> SuiteDetail:
     updates: dict[str, Any] = {}
@@ -251,28 +287,41 @@ async def update_suite(
         updates["agent_id"] = _parse_uuid(body.agent_id, "agentId")
 
     async with engine.connect() as conn, conn.begin():
-        exists = (
-            await conn.execute(text("SELECT 1 FROM suites WHERE id = :id"), {"id": suite_id})
-        ).first()
-        if exists is None:
+        existing = (
+            (
+                await conn.execute(
+                    text("SELECT project_id FROM suites WHERE id = :id"), {"id": suite_id}
+                )
+            )
+            .mappings()
+            .first()
+        )
+        if existing is None:
             raise APIError("not_found", "suite not found", status.HTTP_404_NOT_FOUND)
+        ensure_project_match(existing["project_id"], project_id)
+        if "agent_id" in updates:
+            await _fetch_agent_in_project(conn, updates["agent_id"], project_id)
         if updates:
             set_clause = ", ".join(f"{col} = :{col}" for col in updates)
             await conn.execute(
                 text(f"UPDATE suites SET {set_clause} WHERE id = :id"),
                 {**updates, "id": suite_id},
             )
-    return await get_suite(suite_id, engine)
+    return await get_suite(suite_id, project_id, engine)
 
 
 @router.delete("/v1/suites/{suite_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_suite(
     suite_id: uuid.UUID,
     user_id: str = Depends(require_user_id),
+    project_id: uuid.UUID = Depends(require_project_id),
     engine: AsyncEngine = Depends(get_engine),
 ) -> None:
     async with engine.connect() as conn, conn.begin():
-        result = await conn.execute(text("DELETE FROM suites WHERE id = :id"), {"id": suite_id})
+        result = await conn.execute(
+            text("DELETE FROM suites WHERE id = :id AND project_id = :project_id"),
+            {"id": suite_id, "project_id": project_id},
+        )
         if result.rowcount == 0:
             raise APIError("not_found", "suite not found", status.HTTP_404_NOT_FOUND)
 
@@ -287,14 +336,22 @@ async def add_scenario(
     body: ScenarioCreateRequest,
     response: Response,
     user_id: str = Depends(require_user_id),
+    project_id: uuid.UUID = Depends(require_project_id),
     engine: AsyncEngine = Depends(get_engine),
 ) -> ScenarioSummary:
     async with engine.connect() as conn, conn.begin():
-        suite_exists = (
-            await conn.execute(text("SELECT 1 FROM suites WHERE id = :id"), {"id": suite_id})
-        ).first()
-        if suite_exists is None:
+        suite_row = (
+            (
+                await conn.execute(
+                    text("SELECT project_id FROM suites WHERE id = :id"), {"id": suite_id}
+                )
+            )
+            .mappings()
+            .first()
+        )
+        if suite_row is None:
             raise APIError("not_found", "suite not found", status.HTTP_404_NOT_FOUND)
+        ensure_project_match(suite_row["project_id"], project_id)
 
         if body.from_draft_id is not None:
             existing = (
@@ -374,11 +431,36 @@ async def add_scenario(
     return _scenario_summary(row, None, _assert_count(row["assertions"]))
 
 
+async def _fetch_scenario_project_or_404(
+    conn: AsyncConnection, scenario_id: uuid.UUID
+) -> uuid.UUID:
+    """Scenarios carry no project_id of their own (B2.5-01: only
+    agents/suites/runs got the NOT NULL column) -- they scope transitively
+    through their suite, same as run_events/turns scope through run_id."""
+    row = (
+        (
+            await conn.execute(
+                text(
+                    "SELECT s.project_id FROM scenarios sc "
+                    "JOIN suites s ON s.id = sc.suite_id WHERE sc.id = :id"
+                ),
+                {"id": scenario_id},
+            )
+        )
+        .mappings()
+        .first()
+    )
+    if row is None:
+        raise APIError("not_found", "scenario not found", status.HTTP_404_NOT_FOUND)
+    return uuid.UUID(str(row["project_id"]))
+
+
 @router.patch("/v1/scenarios/{scenario_id}", response_model=ScenarioSummary)
 async def update_scenario(
     scenario_id: uuid.UUID,
     body: ScenarioUpdate,
     user_id: str = Depends(require_user_id),
+    project_id: uuid.UUID = Depends(require_project_id),
     engine: AsyncEngine = Depends(get_engine),
 ) -> ScenarioSummary:
     updates: dict[str, Any] = {}
@@ -392,11 +474,8 @@ async def update_scenario(
         updates["assertions"] = json.dumps(body.assertions)
 
     async with engine.connect() as conn, conn.begin():
-        exists = (
-            await conn.execute(text("SELECT 1 FROM scenarios WHERE id = :id"), {"id": scenario_id})
-        ).first()
-        if exists is None:
-            raise APIError("not_found", "scenario not found", status.HTTP_404_NOT_FOUND)
+        scenario_project_id = await _fetch_scenario_project_or_404(conn, scenario_id)
+        ensure_project_match(scenario_project_id, project_id)
         if updates:
             assignments = []
             params: dict[str, Any] = {"id": scenario_id}
@@ -433,9 +512,12 @@ async def update_scenario(
 async def delete_scenario(
     scenario_id: uuid.UUID,
     user_id: str = Depends(require_user_id),
+    project_id: uuid.UUID = Depends(require_project_id),
     engine: AsyncEngine = Depends(get_engine),
 ) -> None:
     async with engine.connect() as conn, conn.begin():
+        scenario_project_id = await _fetch_scenario_project_or_404(conn, scenario_id)
+        ensure_project_match(scenario_project_id, project_id)
         result = await conn.execute(
             text("DELETE FROM scenarios WHERE id = :id"), {"id": scenario_id}
         )

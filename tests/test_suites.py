@@ -16,14 +16,11 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from app.config import get_settings
 from app.main import app
-from tests.conftest import _test_engine, requires_test_db
+from tests.conftest import _test_engine, auth_headers, requires_test_db
 
 pytestmark = requires_test_db
 
-_HEADERS = {
-    "Authorization": f"Bearer {get_settings().python_service_token}",
-    "X-User-Id": "user-1",
-}
+_HEADERS = auth_headers()
 
 
 async def _client() -> AsyncClient:

@@ -63,6 +63,7 @@ AgentConfig = Annotated[WebConfig | SipConfig | PhoneConfig, Field(discriminator
 class AgentDetail(APIModel):
     id: str
     name: str
+    project_id: str
     transport: ConnectionType
     config: dict[str, object]
     language: str | None = None

@@ -12,9 +12,9 @@ class Suite(Base, OrgScopedMixin, TimestampMixin):
     __tablename__ = "suites"
 
     id: Mapped[uuid.UUID] = uuid_pk()
-    # B2-06: see Agent.project_id's comment -- nullable + server_default.
-    project_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("projects.id"), nullable=True, server_default=str(DEFAULT_PROJECT_ID)
+    # B2.5-01: see Agent.project_id's comment -- NOT NULL now.
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id"), nullable=False, server_default=str(DEFAULT_PROJECT_ID)
     )
     name: Mapped[str] = mapped_column(Text, nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)

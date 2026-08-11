@@ -33,10 +33,10 @@ from typing import Any, Literal
 from fastapi import APIRouter, Depends, status
 from sqlalchemy import text
 from sqlalchemy.engine import RowMapping
-from sqlalchemy.ext.asyncio import AsyncEngine
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from app.db import get_engine
-from app.deps import require_user_id
+from app.deps import ensure_project_match, require_project_id, require_user_id
 from app.errors import APIError
 from app.formatting import relative_time
 from app.schemas.agents import (
@@ -100,6 +100,7 @@ def _agent_detail(row: RowMapping) -> AgentDetail:
     return AgentDetail(
         id=str(row["id"]),
         name=row["name"],
+        project_id=str(row["project_id"]),
         transport=row["transport"],
         config=row["config"],
         language=row["language"],
@@ -109,14 +110,27 @@ def _agent_detail(row: RowMapping) -> AgentDetail:
     )
 
 
-_AGENT_COLUMNS = "id, name, transport, config, language, max_concurrency, status, last_seen_at"
+_AGENT_COLUMNS = (
+    "id, project_id, name, transport, config, language, max_concurrency, status, last_seen_at"
+)
 
 
 @router.get("/v1/agents", response_model=list[ConnectedAgent])
-async def list_agents(engine: AsyncEngine = Depends(get_engine)) -> list[ConnectedAgent]:
+async def list_agents(
+    project_id: uuid.UUID = Depends(require_project_id),
+    engine: AsyncEngine = Depends(get_engine),
+) -> list[ConnectedAgent]:
     async with engine.connect() as conn:
         rows = (
-            (await conn.execute(text(f"SELECT {_AGENT_COLUMNS} FROM agents ORDER BY created_at")))
+            (
+                await conn.execute(
+                    text(
+                        f"SELECT {_AGENT_COLUMNS} FROM agents "
+                        "WHERE project_id = :project_id ORDER BY created_at"
+                    ),
+                    {"project_id": project_id},
+                )
+            )
             .mappings()
             .all()
         )
@@ -124,10 +138,21 @@ async def list_agents(engine: AsyncEngine = Depends(get_engine)) -> list[Connect
 
 
 @router.get("/v1/agents/health", response_model=list[AgentHealth])
-async def agents_health(engine: AsyncEngine = Depends(get_engine)) -> list[AgentHealth]:
+async def agents_health(
+    project_id: uuid.UUID = Depends(require_project_id),
+    engine: AsyncEngine = Depends(get_engine),
+) -> list[AgentHealth]:
     async with engine.connect() as conn:
         rows = (
-            (await conn.execute(text(f"SELECT {_AGENT_COLUMNS} FROM agents ORDER BY created_at")))
+            (
+                await conn.execute(
+                    text(
+                        f"SELECT {_AGENT_COLUMNS} FROM agents "
+                        "WHERE project_id = :project_id ORDER BY created_at"
+                    ),
+                    {"project_id": project_id},
+                )
+            )
             .mappings()
             .all()
         )
@@ -138,6 +163,7 @@ async def agents_health(engine: AsyncEngine = Depends(get_engine)) -> list[Agent
 async def create_agent(
     body: AgentCreate,
     user_id: str = Depends(require_user_id),
+    project_id: uuid.UUID = Depends(require_project_id),
     engine: AsyncEngine = Depends(get_engine),
 ) -> AgentDetail:
     config_dict = body.config.model_dump(mode="json", by_alias=True)
@@ -147,14 +173,15 @@ async def create_agent(
                 await conn.execute(
                     text(
                         "INSERT INTO agents "
-                        "(id, name, transport, config, language, max_concurrency, "
+                        "(id, project_id, name, transport, config, language, max_concurrency, "
                         " created_by_user_id) "
-                        "VALUES (:id, :name, :transport, CAST(:config AS jsonb), :language, "
-                        " :max_concurrency, :user_id) "
+                        "VALUES (:id, :project_id, :name, :transport, CAST(:config AS jsonb), "
+                        " :language, :max_concurrency, :user_id) "
                         f"RETURNING {_AGENT_COLUMNS}"
                     ),
                     {
                         "id": uuid.uuid4(),
+                        "project_id": project_id,
                         "name": body.name,
                         "transport": body.config.transport,
                         "config": _dump_json(config_dict),
@@ -174,20 +201,32 @@ def _dump_json(value: object) -> str:
     return json.dumps(value)
 
 
-@router.get("/v1/agents/{agent_id}", response_model=AgentDetail)
-async def get_agent(agent_id: uuid.UUID, engine: AsyncEngine = Depends(get_engine)) -> AgentDetail:
-    async with engine.connect() as conn:
-        row = (
-            (
-                await conn.execute(
-                    text(f"SELECT {_AGENT_COLUMNS} FROM agents WHERE id = :id"), {"id": agent_id}
-                )
+async def _fetch_agent_or_404(
+    conn: AsyncConnection, agent_id: uuid.UUID, project_id: uuid.UUID
+) -> RowMapping:
+    row = (
+        (
+            await conn.execute(
+                text(f"SELECT {_AGENT_COLUMNS} FROM agents WHERE id = :id"), {"id": agent_id}
             )
-            .mappings()
-            .first()
         )
+        .mappings()
+        .first()
+    )
     if row is None:
         raise APIError("not_found", "agent not found", status.HTTP_404_NOT_FOUND)
+    ensure_project_match(row["project_id"], project_id)
+    return row
+
+
+@router.get("/v1/agents/{agent_id}", response_model=AgentDetail)
+async def get_agent(
+    agent_id: uuid.UUID,
+    project_id: uuid.UUID = Depends(require_project_id),
+    engine: AsyncEngine = Depends(get_engine),
+) -> AgentDetail:
+    async with engine.connect() as conn:
+        row = await _fetch_agent_or_404(conn, agent_id, project_id)
     return _agent_detail(row)
 
 
@@ -196,6 +235,7 @@ async def update_agent(
     agent_id: uuid.UUID,
     body: AgentUpdate,
     user_id: str = Depends(require_user_id),
+    project_id: uuid.UUID = Depends(require_project_id),
     engine: AsyncEngine = Depends(get_engine),
 ) -> AgentDetail:
     updates: dict[str, Any] = {}
@@ -210,11 +250,7 @@ async def update_agent(
         updates["config"] = _dump_json(body.config.model_dump(mode="json", by_alias=True))
 
     async with engine.connect() as conn, conn.begin():
-        exists = (
-            await conn.execute(text("SELECT 1 FROM agents WHERE id = :id"), {"id": agent_id})
-        ).first()
-        if exists is None:
-            raise APIError("not_found", "agent not found", status.HTTP_404_NOT_FOUND)
+        await _fetch_agent_or_404(conn, agent_id, project_id)
         if updates:
             assignments = []
             params: dict[str, Any] = {"id": agent_id}
@@ -241,14 +277,11 @@ async def update_agent(
 async def delete_agent(
     agent_id: uuid.UUID,
     user_id: str = Depends(require_user_id),
+    project_id: uuid.UUID = Depends(require_project_id),
     engine: AsyncEngine = Depends(get_engine),
 ) -> None:
     async with engine.connect() as conn, conn.begin():
-        exists = (
-            await conn.execute(text("SELECT 1 FROM agents WHERE id = :id"), {"id": agent_id})
-        ).first()
-        if exists is None:
-            raise APIError("not_found", "agent not found", status.HTTP_404_NOT_FOUND)
+        await _fetch_agent_or_404(conn, agent_id, project_id)
         in_use = (
             await conn.execute(
                 text(
@@ -285,18 +318,10 @@ async def test_connection_pre_save(body: AgentConfig) -> TestConnectionResult:
 
 @router.post("/v1/agents/{agent_id}/test-connection", response_model=TestConnectionResult)
 async def test_connection_post_save(
-    agent_id: uuid.UUID, engine: AsyncEngine = Depends(get_engine)
+    agent_id: uuid.UUID,
+    project_id: uuid.UUID = Depends(require_project_id),
+    engine: AsyncEngine = Depends(get_engine),
 ) -> TestConnectionResult:
     async with engine.connect() as conn:
-        row = (
-            (
-                await conn.execute(
-                    text("SELECT transport FROM agents WHERE id = :id"), {"id": agent_id}
-                )
-            )
-            .mappings()
-            .first()
-        )
-    if row is None:
-        raise APIError("not_found", "agent not found", status.HTTP_404_NOT_FOUND)
+        row = await _fetch_agent_or_404(conn, agent_id, project_id)
     return _test_connection_result(row["transport"])

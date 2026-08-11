@@ -12,7 +12,13 @@ from app.models.projects import DEFAULT_PROJECT_ID
 class Run(Base, OrgScopedMixin, TimestampMixin):
     __tablename__ = "runs"
     __table_args__ = (
-        UniqueConstraint("idempotency_key"),
+        # B2.5-01: scoped to project, not global -- two projects reusing the
+        # same Idempotency-Key must each get their own run, not have the
+        # second request silently return the first project's run_id via
+        # ON CONFLICT DO NOTHING (app/api/runs.py's _create_run).
+        UniqueConstraint(
+            "project_id", "idempotency_key", name="uq_runs_project_id_idempotency_key"
+        ),
         CheckConstraint(
             "type IN ('simulation', 'discovery', 'redteam', 'suite')", name="type_valid"
         ),
@@ -32,8 +38,9 @@ class Run(Base, OrgScopedMixin, TimestampMixin):
     id: Mapped[uuid.UUID] = uuid_pk()
     type: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default="queued")
-    project_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("projects.id"), nullable=True, server_default=str(DEFAULT_PROJECT_ID)
+    # B2.5-01: NOT NULL -- see Agent.project_id's comment.
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id"), nullable=False, server_default=str(DEFAULT_PROJECT_ID)
     )
     agent_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("agents.id"), nullable=False)
     scenario_id: Mapped[uuid.UUID | None] = mapped_column(

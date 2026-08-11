@@ -16,12 +16,11 @@ class Agent(Base, OrgScopedMixin, TimestampMixin):
     )
 
     id: Mapped[uuid.UUID] = uuid_pk()
-    # B2-06: nullable (not required) -- server_default fills it for new
-    # rows, existing rows are backfilled by the migration, but the column
-    # itself stays optional (schema/plumbing only, per the ticket -- no
-    # project switcher exists yet to make this a real user-facing choice).
-    project_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("projects.id"), nullable=True, server_default=str(DEFAULT_PROJECT_ID)
+    # B2.5-01: NOT NULL -- every row was backfilled to DEFAULT_PROJECT_ID by
+    # B2-06's migration, and the project switcher now makes this a real,
+    # required, user-facing scope rather than schema/plumbing only.
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id"), nullable=False, server_default=str(DEFAULT_PROJECT_ID)
     )
     name: Mapped[str] = mapped_column(Text, nullable=False)
     transport: Mapped[str] = mapped_column(Text, nullable=False)

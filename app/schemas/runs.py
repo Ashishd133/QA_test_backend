@@ -58,10 +58,61 @@ class DashboardRunRow(APIModel):
     pass_rate: str
     duration: str
     run_id: str
-    # B2-06: null until B2-08's executor writes them (schema/plumbing only).
-    project_id: str | None = None
+    # B2.5-01: NOT NULL on the runs table -- always present now.
+    project_id: str
     end_reason: EndReason | None = None
     cost: RunCost | None = None
+    # B2.5-03: a Test Run has parent_run_id IS NULL; a Call has it set.
+    # `is_parent` is literally that predicate (matches `?isParent=true`'s
+    # filter) -- it does NOT mean "has children"; a single simulation run
+    # is a Test Run (is_parent=true) with zero DB-level children and one
+    # *implicit* call, per this ticket's "do not special-case them" rule.
+    is_parent: bool
+    parent_run_id: str | None = None
+
+
+class RunAggregate(APIModel):
+    """B2.5-03: read-computed, never persisted -- reduced fresh from
+    children (or, for a childless Test Run, from the run's own single
+    implicit call) on every read, so it can never drift from what
+    GET /v1/runs?parentRunId= would show for the same rows. B2.5-04 adds
+    the *status* rollup (a separate, persisted, transactional concern);
+    this block stays read-computed even after that lands.
+    """
+
+    call_count: int
+    status_counts: dict[str, int]
+    # None when no call has reached a scored terminal state yet (all idle).
+    pass_rate: float | None
+    latency_p50_ms: float | None
+    latency_p90_ms: float | None
+    latency_p95_ms: float | None
+    total_cost_usd: float | None
+    distinct_scenario_count: int
+    distinct_persona_count: int
+
+
+class RunDeltaRow(APIModel):
+    """B2.5-05: `?fields=light`'s row shape -- only what the call queue
+    repaints on each poll. Deliberately excludes everything RunDetail has
+    that a queue row doesn't need (transcript, cost breakdown, ...) --
+    that's the entire cost saving this endpoint exists for."""
+
+    id: str
+    status: str
+    score: float | None
+    turns: int | None
+    duration_ms: int | None
+    latency_p95: float | None
+    # Null until B2.7-09 wires goal-vs-assertions into the judge -- present
+    # in the shape now per stitch protocol §2 ("a tag means shapes are
+    # stable, not endpoints work").
+    goal_met: bool | None
+
+
+class RunsDelta(APIModel):
+    calls: list[RunDeltaRow]
+    aggregate: RunAggregate
 
 
 class RunDetail(APIModel):
@@ -77,8 +128,8 @@ class RunDetail(APIModel):
     wer: str
     sentiment: str
     duration: str
-    # B2-06: null until B2-08's executor writes them (schema/plumbing only).
-    project_id: str | None = None
+    # B2.5-01: NOT NULL on the runs table -- always present now.
+    project_id: str
     end_reason: EndReason | None = None
     cost: RunCost | None = None
     # gs://... URI, playable via a signed URL generated on read (see
@@ -89,6 +140,13 @@ class RunDetail(APIModel):
     transcript: list[TranscriptTurn]
     result_assertions: list[ResultAssertion]
     latency_series: list[float]
+    # B2.5-03: see DashboardRunRow's comment -- same predicate, same
+    # "do not special-case a single implicit call" rule.
+    is_parent: bool
+    parent_run_id: str | None = None
+    # Present iff is_parent -- a Call's own detail has no aggregate to
+    # show (it has no children of its own).
+    aggregate: RunAggregate | None = None
 
 
 class DummyIdentity(APIModel):

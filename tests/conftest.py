@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from app.config import get_settings
 from app.db import build_engine, get_engine
 from app.main import app
+from app.models.projects import DEFAULT_PROJECT_ID
 
 # Diagnosed 2026-08 (see test-suite-resource-exhaustion memory): an
 # occasional stalled `getaddrinfo()` call -- a blocking OS call, run in the
@@ -33,6 +34,23 @@ asyncio.constants.THREAD_JOIN_TIMEOUT = 5  # type: ignore[misc]
 requires_test_db = pytest.mark.skipif(
     not get_settings().test_database_url, reason="TEST_DATABASE_URL not configured"
 )
+
+
+def auth_headers(
+    *, user_id: str | None = "user-1", project_id: object = DEFAULT_PROJECT_ID
+) -> dict[str, str]:
+    """Shared header builder for project-scoped routes (B2.5-01). Every
+    test module that exercises agents/suites/runs through a real HTTP
+    request needs X-Project-Id now that those tables are hard-scoped --
+    centralized here so B2.6's next scoped surface doesn't mean editing
+    ten modules again. `user_id=None` omits X-User-Id, for the negative
+    "missing header" tests."""
+    headers = {"Authorization": f"Bearer {get_settings().python_service_token}"}
+    if user_id is not None:
+        headers["X-User-Id"] = user_id
+    if project_id is not None:
+        headers["X-Project-Id"] = str(project_id)
+    return headers
 
 
 def _test_engine() -> AsyncEngine:

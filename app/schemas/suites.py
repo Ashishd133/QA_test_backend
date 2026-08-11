@@ -33,6 +33,7 @@ class ScenarioSummary(APIModel):
 
 class SuiteListItem(APIModel):
     id: str
+    project_id: str
     name: str
     desc: str
     agent: str

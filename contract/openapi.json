@@ -94,6 +94,10 @@
             "title": "Name",
             "type": "string"
           },
+          "projectId": {
+            "title": "Projectid",
+            "type": "string"
+          },
           "status": {
             "anyOf": [
               {
@@ -118,6 +122,7 @@
         "required": [
           "id",
           "name",
+          "projectId",
           "transport",
           "config",
           "maxConcurrency"
@@ -475,11 +480,11 @@
             "title": "Id",
             "type": "string"
           },
-          "passRate": {
-            "title": "Passrate",
-            "type": "string"
+          "isParent": {
+            "title": "Isparent",
+            "type": "boolean"
           },
-          "projectId": {
+          "parentRunId": {
             "anyOf": [
               {
                 "type": "string"
@@ -488,7 +493,15 @@
                 "type": "null"
               }
             ],
-            "title": "Projectid"
+            "title": "Parentrunid"
+          },
+          "passRate": {
+            "title": "Passrate",
+            "type": "string"
+          },
+          "projectId": {
+            "title": "Projectid",
+            "type": "string"
           },
           "runId": {
             "title": "Runid",
@@ -516,7 +529,9 @@
           "status",
           "passRate",
           "duration",
-          "runId"
+          "runId",
+          "projectId",
+          "isParent"
         ],
         "title": "DashboardRunRow",
         "type": "object"
@@ -829,6 +844,60 @@
         "title": "NodeData",
         "type": "object"
       },
+      "Organization": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "projects": {
+            "items": {
+              "$ref": "#/components/schemas/OrganizationProject"
+            },
+            "title": "Projects",
+            "type": "array"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "slug",
+          "projects"
+        ],
+        "title": "Organization",
+        "type": "object"
+      },
+      "OrganizationProject": {
+        "properties": {
+          "agentCount": {
+            "title": "Agentcount",
+            "type": "integer"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "agentCount"
+        ],
+        "title": "OrganizationProject",
+        "type": "object"
+      },
       "Outcome": {
         "properties": {
           "failed": {
@@ -939,6 +1008,10 @@
       },
       "Project": {
         "properties": {
+          "createdAt": {
+            "title": "Createdat",
+            "type": "string"
+          },
           "id": {
             "title": "Id",
             "type": "string"
@@ -950,9 +1023,40 @@
         },
         "required": [
           "id",
-          "name"
+          "name",
+          "createdAt"
         ],
         "title": "Project",
+        "type": "object"
+      },
+      "ProjectCreate": {
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "ProjectCreate",
+        "type": "object"
+      },
+      "ProjectUpdate": {
+        "properties": {
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          }
+        },
+        "title": "ProjectUpdate",
         "type": "object"
       },
       "RedteamRunCreate": {
@@ -1004,6 +1108,98 @@
           "ok"
         ],
         "title": "ResultAssertion",
+        "type": "object"
+      },
+      "RunAggregate": {
+        "description": "B2.5-03: read-computed, never persisted -- reduced fresh from\nchildren (or, for a childless Test Run, from the run's own single\nimplicit call) on every read, so it can never drift from what\nGET /v1/runs?parentRunId= would show for the same rows. B2.5-04 adds\nthe *status* rollup (a separate, persisted, transactional concern);\nthis block stays read-computed even after that lands.",
+        "properties": {
+          "callCount": {
+            "title": "Callcount",
+            "type": "integer"
+          },
+          "distinctPersonaCount": {
+            "title": "Distinctpersonacount",
+            "type": "integer"
+          },
+          "distinctScenarioCount": {
+            "title": "Distinctscenariocount",
+            "type": "integer"
+          },
+          "latencyP50Ms": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latencyp50Ms"
+          },
+          "latencyP90Ms": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latencyp90Ms"
+          },
+          "latencyP95Ms": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latencyp95Ms"
+          },
+          "passRate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Passrate"
+          },
+          "statusCounts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Statuscounts",
+            "type": "object"
+          },
+          "totalCostUsd": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Totalcostusd"
+          }
+        },
+        "required": [
+          "callCount",
+          "statusCounts",
+          "passRate",
+          "latencyP50Ms",
+          "latencyP90Ms",
+          "latencyP95Ms",
+          "totalCostUsd",
+          "distinctScenarioCount",
+          "distinctPersonaCount"
+        ],
+        "title": "RunAggregate",
         "type": "object"
       },
       "RunCost": {
@@ -1058,6 +1254,85 @@
         "title": "RunCreateResponse",
         "type": "object"
       },
+      "RunDeltaRow": {
+        "description": "B2.5-05: `?fields=light`'s row shape -- only what the call queue\nrepaints on each poll. Deliberately excludes everything RunDetail has\nthat a queue row doesn't need (transcript, cost breakdown, ...) --\nthat's the entire cost saving this endpoint exists for.",
+        "properties": {
+          "durationMs": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Durationms"
+          },
+          "goalMet": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Goalmet"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "latencyP95": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latencyp95"
+          },
+          "score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Score"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "turns": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Turns"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "score",
+          "turns",
+          "durationMs",
+          "latencyP95",
+          "goalMet"
+        ],
+        "title": "RunDeltaRow",
+        "type": "object"
+      },
       "RunDetail": {
         "properties": {
           "agentMeta": {
@@ -1067,6 +1342,16 @@
           "agentName": {
             "title": "Agentname",
             "type": "string"
+          },
+          "aggregate": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RunAggregate"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "avgLatency": {
             "title": "Avglatency",
@@ -1113,6 +1398,10 @@
             "title": "Id",
             "type": "string"
           },
+          "isParent": {
+            "title": "Isparent",
+            "type": "boolean"
+          },
           "latencySeries": {
             "items": {
               "type": "number"
@@ -1120,7 +1409,7 @@
             "title": "Latencyseries",
             "type": "array"
           },
-          "projectId": {
+          "parentRunId": {
             "anyOf": [
               {
                 "type": "string"
@@ -1129,7 +1418,11 @@
                 "type": "null"
               }
             ],
-            "title": "Projectid"
+            "title": "Parentrunid"
+          },
+          "projectId": {
+            "title": "Projectid",
+            "type": "string"
           },
           "recordingUrl": {
             "anyOf": [
@@ -1204,12 +1497,34 @@
           "wer",
           "sentiment",
           "duration",
+          "projectId",
           "createdAt",
           "transcript",
           "resultAssertions",
-          "latencySeries"
+          "latencySeries",
+          "isParent"
         ],
         "title": "RunDetail",
+        "type": "object"
+      },
+      "RunsDelta": {
+        "properties": {
+          "aggregate": {
+            "$ref": "#/components/schemas/RunAggregate"
+          },
+          "calls": {
+            "items": {
+              "$ref": "#/components/schemas/RunDeltaRow"
+            },
+            "title": "Calls",
+            "type": "array"
+          }
+        },
+        "required": [
+          "calls",
+          "aggregate"
+        ],
+        "title": "RunsDelta",
         "type": "object"
       },
       "ScenarioCreateRequest": {
@@ -1524,6 +1839,10 @@
             "title": "Pr",
             "type": "integer"
           },
+          "projectId": {
+            "title": "Projectid",
+            "type": "string"
+          },
           "scenarios": {
             "items": {
               "$ref": "#/components/schemas/ScenarioSummary"
@@ -1534,6 +1853,7 @@
         },
         "required": [
           "id",
+          "projectId",
           "name",
           "desc",
           "agent",
@@ -1579,10 +1899,15 @@
           "pr": {
             "title": "Pr",
             "type": "integer"
+          },
+          "projectId": {
+            "title": "Projectid",
+            "type": "string"
           }
         },
         "required": [
           "id",
+          "projectId",
           "name",
           "desc",
           "agent",
@@ -2270,6 +2595,31 @@
         ]
       }
     },
+    "/v1/organizations": {
+      "get": {
+        "operationId": "list_organizations",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/Organization"
+                  },
+                  "title": "Response List Organizations",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Organizations",
+        "tags": [
+          "organizations"
+        ]
+      }
+    },
     "/v1/personas": {
       "get": {
         "operationId": "list_personas",
@@ -2315,6 +2665,132 @@
           }
         },
         "summary": "List Projects",
+        "tags": [
+          "projects"
+        ]
+      },
+      "post": {
+        "operationId": "create_project",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Project"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Project",
+        "tags": [
+          "projects"
+        ]
+      }
+    },
+    "/v1/projects/{project_id}": {
+      "delete": {
+        "operationId": "delete_project",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Project",
+        "tags": [
+          "projects"
+        ]
+      },
+      "patch": {
+        "operationId": "update_project",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Project"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Project",
         "tags": [
           "projects"
         ]
@@ -2451,6 +2927,73 @@
           },
           {
             "in": "query",
+            "name": "isParent",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Isparent"
+            }
+          },
+          {
+            "in": "query",
+            "name": "parentRunId",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Parentrunid"
+            }
+          },
+          {
+            "in": "query",
+            "name": "since",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Since"
+            }
+          },
+          {
+            "in": "query",
+            "name": "fields",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "const": "light",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Fields"
+            }
+          },
+          {
+            "in": "query",
             "name": "limit",
             "required": false,
             "schema": {
@@ -2467,11 +3010,18 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/DashboardRunRow"
-                  },
-                  "title": "Response List Runs",
-                  "type": "array"
+                  "anyOf": [
+                    {
+                      "items": {
+                        "$ref": "#/components/schemas/DashboardRunRow"
+                      },
+                      "type": "array"
+                    },
+                    {
+                      "$ref": "#/components/schemas/RunsDelta"
+                    }
+                  ],
+                  "title": "Response List Runs"
                 }
               }
             },
