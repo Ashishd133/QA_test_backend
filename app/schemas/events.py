@@ -92,3 +92,13 @@ class ErrorData(EventData):
     code: str
     message: str
     fatal: bool = False
+
+
+class ProgressData(EventData):
+    """B2.5-04: emitted on the *parent's* run_events (not the child's) every
+    time a child reaches a terminal status -- see app.workers.rollup. Exists
+    so a future push channel on the parent's own SSE stream is a config
+    change, not a rewrite (the ticket's own phrasing)."""
+
+    completed_count: int
+    total_count: int

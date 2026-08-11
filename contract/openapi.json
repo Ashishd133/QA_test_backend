@@ -1006,6 +1006,25 @@
         "title": "PhoneConfig",
         "type": "object"
       },
+      "ProgressData": {
+        "description": "B2.5-04: emitted on the *parent's* run_events (not the child's) every\ntime a child reaches a terminal status -- see app.workers.rollup. Exists\nso a future push channel on the parent's own SSE stream is a config\nchange, not a rewrite (the ticket's own phrasing).",
+        "properties": {
+          "completedCount": {
+            "title": "Completedcount",
+            "type": "integer"
+          },
+          "totalCount": {
+            "title": "Totalcount",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "completedCount",
+          "totalCount"
+        ],
+        "title": "ProgressData",
+        "type": "object"
+      },
       "Project": {
         "properties": {
           "createdAt": {

@@ -24,6 +24,7 @@ from app.schemas.events import (
 from app.workers.claim import ClaimedRun
 from app.workers.heartbeat import heartbeat_loop
 from app.workers.materialize import materialize_run
+from app.workers.rollup import maybe_close_parent
 
 SCRIPTS_DIR = Path(__file__).resolve().parent / "scripts"
 DEFAULT_SCRIPT = "basic_simulation.json"
@@ -174,6 +175,7 @@ async def run_fake_script(
                         ),
                         {"id": claimed.id, "metrics": json.dumps(metrics)},
                     )
+                    await maybe_close_parent(conn, claimed.id)
                 else:
                     await emit(conn, claimed.id, event)
     finally:

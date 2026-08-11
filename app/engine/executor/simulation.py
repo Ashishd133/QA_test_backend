@@ -63,6 +63,7 @@ from app.workers.claim import ClaimedRun
 from app.workers.fake_runner import run_fake_script
 from app.workers.heartbeat import heartbeat_loop
 from app.workers.materialize import materialize_run
+from app.workers.rollup import maybe_close_parent
 
 # Same bounded-shutdown discipline as fake_runner.py's heartbeat teardown
 # (test-suite-resource-exhaustion / B1-08's cousin: an uncancellable wedge
@@ -223,6 +224,7 @@ async def _run_simulation_body(engine: AsyncEngine, claimed: ClaimedRun) -> None
                 ),
                 {"id": run_id},
             )
+            await maybe_close_parent(conn, run_id)
         return
 
     try:
@@ -246,6 +248,7 @@ async def _run_simulation_body(engine: AsyncEngine, claimed: ClaimedRun) -> None
                 ),
                 {"id": run_id},
             )
+            await maybe_close_parent(conn, run_id)
         return
 
     if not has_real_script:
@@ -327,6 +330,7 @@ async def _run_simulation_traced(
                     ),
                     {"id": run_id},
                 )
+                await maybe_close_parent(conn, run_id)
             return
 
         incremental_judge = IncrementalJudge(client, usage=usage)
@@ -444,6 +448,7 @@ async def _run_simulation_traced(
                     ),
                     {"id": run_id},
                 )
+                await maybe_close_parent(conn, run_id)
             return
         finally:
             await _shutdown_task(
@@ -508,6 +513,7 @@ async def _run_simulation_traced(
                             "recording_url": result.recording_url,
                         },
                     )
+                    await maybe_close_parent(conn, run_id)
                 return
 
             with get_tracer().start_as_current_span(
@@ -576,6 +582,7 @@ async def _run_simulation_traced(
                         "recording_url": result.recording_url,
                     },
                 )
+                await maybe_close_parent(conn, run_id)
         except Exception:
             logger.exception(f"final scoring/materialization failed for run {run_id}")
             async with engine.connect() as conn, conn.begin():
@@ -591,6 +598,7 @@ async def _run_simulation_traced(
                     ),
                     {"id": run_id, "cost": json.dumps(usage.as_dict())},
                 )
+                await maybe_close_parent(conn, run_id)
     finally:
         await _shutdown_task(
             heartbeat_task,

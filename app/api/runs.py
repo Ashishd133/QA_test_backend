@@ -36,6 +36,7 @@ from app.schemas.runs import (
     TranscriptTurn,
 )
 from app.verdict import format_score, verdict_for_run
+from app.workers.rollup import maybe_close_parent
 
 router = APIRouter(tags=["runs"])
 
@@ -890,6 +891,7 @@ async def cancel_run(
         await conn.execute(
             text("UPDATE runs SET status = 'cancelled' WHERE id = :id"), {"id": run_id}
         )
+        await maybe_close_parent(conn, run_id)
         await conn.execute(text("SELECT pg_notify('run_events', :run_id)"), {"run_id": str(run_id)})
 
 

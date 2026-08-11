@@ -24,6 +24,7 @@ from app.schemas.events import (
     IntentData,
     MetricsData,
     NodeData,
+    ProgressData,
     StatusData,
     TurnData,
 )
@@ -39,6 +40,7 @@ EventType = Literal[
     "exposure",
     "done",
     "error",
+    "progress",
 ]
 
 
@@ -181,6 +183,12 @@ def done_event(
 
 def error_event(*, code: str, message: str, fatal: bool = False) -> Event:
     return Event(type="error", data=ErrorData(code=code, message=message, fatal=fatal))
+
+
+def progress_event(*, completed_count: int, total_count: int) -> Event:
+    return Event(
+        type="progress", data=ProgressData(completed_count=completed_count, total_count=total_count)
+    )
 
 
 async def emit(conn: AsyncConnection, run_id: uuid.UUID, event: Event) -> int:

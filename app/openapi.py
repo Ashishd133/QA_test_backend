@@ -19,6 +19,7 @@ from app.schemas.events import (
     IntentData,
     MetricsData,
     NodeData,
+    ProgressData,
     StatusData,
     TurnData,
 )
@@ -34,6 +35,7 @@ EVENT_DATA_MODELS = (
     ExposureData,
     DoneData,
     ErrorData,
+    ProgressData,
 )
 
 
