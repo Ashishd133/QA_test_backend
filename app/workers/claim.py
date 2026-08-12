@@ -12,6 +12,13 @@ class ClaimedRun:
     agent_id: uuid.UUID
     scenario_id: uuid.UUID | None
     config: dict[str, object]
+    # B2.6-05: batch parent this run is a child of, or None for a
+    # standalone Test Run (B2.5-03) -- the real executor
+    # (app.engine.executor.simulation) sets it as a span attribute on every
+    # span it creates so Phoenix can filter a whole batch's calls by one
+    # id. Defaults to None so app.seed's direct ClaimedRun(...) construction
+    # (always a standalone seeded run) doesn't need updating.
+    parent_run_id: uuid.UUID | None = None
 
 
 # B3-03: bounds how many *agents'* oldest-queued rows one claim attempt will
@@ -75,7 +82,7 @@ _CLAIM_OLDEST_FOR_AGENT_SQL = text(
     "  LIMIT 1"
     "  FOR UPDATE SKIP LOCKED"
     ") "
-    "RETURNING id, type, agent_id, scenario_id, config"
+    "RETURNING id, type, agent_id, scenario_id, config, parent_run_id"
 )
 
 
@@ -163,5 +170,6 @@ async def claim_run(engine: AsyncEngine, worker_id: str) -> ClaimedRun | None:
                 agent_id=row["agent_id"],
                 scenario_id=row["scenario_id"],
                 config=row["config"],
+                parent_run_id=row["parent_run_id"],
             )
         return None

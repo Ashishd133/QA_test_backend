@@ -27,6 +27,12 @@ whatever pipecat auto-instruments for the caller/STT/TTS pipeline inside
 `run_persona_call` (enabled by passing `run_id` through to it) -- all
 sharing the run_id attribute, all under the one TracerProvider
 `app.observability.tracing.setup_tracing()` configures at worker startup.
+
+B2.6-05: every span this module creates also carries `parent_run_id`
+(`_span_attributes`, `ClaimedRun.parent_run_id` from B3-03's claim query)
+when this run is a batch child -- omitted for a standalone Test Run.
+Filtering Phoenix by one `parent_run_id` returns spans from every call in
+that batch.
 """
 
 from __future__ import annotations
@@ -64,6 +70,21 @@ from app.workers.fake_runner import run_fake_script
 from app.workers.heartbeat import heartbeat_loop
 from app.workers.materialize import materialize_run
 from app.workers.rollup import maybe_close_parent
+
+
+def _span_attributes(
+    run_id: uuid.UUID, parent_run_id: uuid.UUID | None, **extra: str
+) -> dict[str, str]:
+    """B2.6-05: `parent_run_id` on every span this executor creates (not
+    just the root `run.simulation` one), so a single Phoenix attribute
+    filter finds a whole batch's waterfall without relying on trace-tree
+    expansion from a root span. Omitted (not emitted as empty/None) for a
+    standalone Test Run -- ClaimedRun.parent_run_id is None there."""
+    attrs = {"run_id": str(run_id), **extra}
+    if parent_run_id is not None:
+        attrs["parent_run_id"] = str(parent_run_id)
+    return attrs
+
 
 # Same bounded-shutdown discipline as fake_runner.py's heartbeat teardown
 # (test-suite-resource-exhaustion / B1-08's cousin: an uncancellable wedge
@@ -279,11 +300,14 @@ async def _run_simulation_body(engine: AsyncEngine, claimed: ClaimedRun) -> None
 
     with get_tracer().start_as_current_span(
         "run.simulation",
-        attributes={"run_id": str(run_id), "scenario_id": str(claimed.scenario_id)},
+        attributes=_span_attributes(
+            run_id, claimed.parent_run_id, scenario_id=str(claimed.scenario_id)
+        ),
     ):
         await _run_simulation_traced(
             engine,
             run_id,
+            claimed.parent_run_id,
             persona_spec,
             assertion_specs,
             cancel_event,
@@ -295,6 +319,7 @@ async def _run_simulation_body(engine: AsyncEngine, claimed: ClaimedRun) -> None
 async def _run_simulation_traced(
     engine: AsyncEngine,
     run_id: uuid.UUID,
+    parent_run_id: uuid.UUID | None,
     persona_spec: PersonaSpec,
     assertion_specs: list[AssertionSpec],
     cancel_event: asyncio.Event,
@@ -347,7 +372,8 @@ async def _run_simulation_traced(
             try:
                 judge_transcript = [TranscriptTurn(role=t.speaker, text=t.text) for t in transcript]
                 with get_tracer().start_as_current_span(
-                    "judge.incremental_evaluate", attributes={"run_id": str(run_id)}
+                    "judge.incremental_evaluate",
+                    attributes=_span_attributes(run_id, parent_run_id),
                 ):
                     verdict = await incremental_judge.evaluate(
                         assertion_specs, judge_transcript, dict(assertion_statuses)
@@ -517,7 +543,7 @@ async def _run_simulation_traced(
                 return
 
             with get_tracer().start_as_current_span(
-                "judge.final_evaluate", attributes={"run_id": str(run_id)}
+                "judge.final_evaluate", attributes=_span_attributes(run_id, parent_run_id)
             ):
                 final_verdict = await final_judge.evaluate(
                     assertion_specs,

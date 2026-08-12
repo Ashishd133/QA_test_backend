@@ -43,7 +43,9 @@ async def _seed_agent(conn: AsyncConnection, *, max_concurrency: int) -> uuid.UU
     return agent_id
 
 
-async def _seed_queued_run(conn: AsyncConnection, agent_id: uuid.UUID) -> uuid.UUID:
+async def _seed_queued_run(
+    conn: AsyncConnection, agent_id: uuid.UUID, *, parent_id: uuid.UUID | None = None
+) -> uuid.UUID:
     run_id = uuid.uuid4()
     # created_at uses clock_timestamp(), not the runs table's now()-based
     # server_default: now()/transaction_timestamp() is frozen for the whole
@@ -52,10 +54,11 @@ async def _seed_queued_run(conn: AsyncConnection, agent_id: uuid.UUID) -> uuid.U
     # exact same created_at and make claim order nondeterministic on the tie.
     await conn.execute(
         text(
-            "INSERT INTO runs (id, type, agent_id, created_by_user_id, created_at) "
-            "VALUES (:id, 'simulation', :agent_id, 'user-1', clock_timestamp())"
+            "INSERT INTO runs (id, type, agent_id, parent_run_id, created_by_user_id, "
+            " created_at) "
+            "VALUES (:id, 'simulation', :agent_id, :parent_id, 'user-1', clock_timestamp())"
         ),
-        {"id": run_id, "agent_id": agent_id},
+        {"id": run_id, "agent_id": agent_id, "parent_id": parent_id},
     )
     return run_id
 
@@ -225,5 +228,43 @@ async def test_claim_run_returns_none_with_no_queued_runs(engine: AsyncEngine) -
         agent_id = await _seed_agent(conn, max_concurrency=5)
     try:
         assert await claim_run(engine, "worker") is None
+    finally:
+        await _cleanup(engine, [agent_id])
+
+
+async def test_claimed_run_carries_parent_run_id_for_a_batch_child(engine: AsyncEngine) -> None:
+    """B2.6-05: ClaimedRun.parent_run_id is what the real executor
+    (app.engine.executor.simulation) uses to tag every span it creates --
+    this is the claim-side half of that plumbing."""
+    async with engine.connect() as conn, conn.begin():
+        agent_id = await _seed_agent(conn, max_concurrency=5)
+        parent_id = uuid.uuid4()
+        await conn.execute(
+            text(
+                "INSERT INTO runs (id, type, status, agent_id, created_by_user_id) "
+                "VALUES (:id, 'suite', 'queued', :agent_id, 'user-1')"
+            ),
+            {"id": parent_id, "agent_id": agent_id},
+        )
+        child_id = await _seed_queued_run(conn, agent_id, parent_id=parent_id)
+    try:
+        claimed = await claim_run(engine, "worker")
+        assert claimed is not None
+        assert claimed.id == child_id
+        assert claimed.parent_run_id == parent_id
+    finally:
+        await _cleanup(engine, [agent_id])
+
+
+async def test_claimed_run_parent_run_id_is_none_for_a_standalone_run(
+    engine: AsyncEngine,
+) -> None:
+    async with engine.connect() as conn, conn.begin():
+        agent_id = await _seed_agent(conn, max_concurrency=5)
+        await _seed_queued_run(conn, agent_id)
+    try:
+        claimed = await claim_run(engine, "worker")
+        assert claimed is not None
+        assert claimed.parent_run_id is None
     finally:
         await _cleanup(engine, [agent_id])
