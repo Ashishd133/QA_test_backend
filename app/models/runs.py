@@ -55,6 +55,13 @@ class Run(Base, OrgScopedMixin, TimestampMixin):
         ForeignKey("scenarios.id", ondelete="SET NULL"), nullable=True
     )
     parent_run_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("runs.id"), nullable=True)
+    # B2.6-04: which run this one was cloned from via POST .../rerun -- a
+    # single-run rerun points at the run it reran; a batch rerun's new
+    # parent points at the original batch parent. E8's future diff-view
+    # join point, unconsumed elsewhere for now.
+    rerun_of_run_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("runs.id", ondelete="SET NULL"), nullable=True
+    )
     config: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False, server_default="{}")
     idempotency_key: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_by_user_id: Mapped[str] = mapped_column(Text, nullable=False)

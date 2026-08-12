@@ -3241,6 +3241,7 @@
     },
     "/v1/runs/{run_id}/rerun": {
       "post": {
+        "description": "B2.6-04. `run_id` naming a batch parent (has children) clones a new\nbatch: same agent, same scenario set (optionally restricted to\nchildren whose last result was a 'fail' verdict -- `verdict_for_run`,\nthe same fold used everywhere else a run's pass/warn/fail/idle status\nis shown, not a raw `status = 'failed'` check, since a `completed` run\nwith a failing judged assertion is what \"failed\" means to a human\nlooking at the History table). `rerun_of_run_id` records the lineage\n(E8's future diff view) on the new parent; new children don't get\ntheir own (no per-child lineage tracking yet -- batch-level is what\nthis ticket asks for).\n\n`run_id` naming a plain run (pre-B2.6, or a Call) takes the original\nsingle-row clone path unchanged, now also stamping `rerun_of_run_id`.",
         "operationId": "rerun_run",
         "parameters": [
           {
@@ -3252,6 +3253,20 @@
               "title": "Run Id",
               "type": "string"
             }
+          },
+          {
+            "in": "query",
+            "name": "only",
+            "required": false,
+            "schema": {
+              "default": "all",
+              "enum": [
+                "failed",
+                "all"
+              ],
+              "title": "Only",
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -3259,7 +3274,15 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/RunCreateResponse"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/RunCreateResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/SuiteRunCreateResponse"
+                    }
+                  ],
+                  "title": "Response Rerun Run"
                 }
               }
             },

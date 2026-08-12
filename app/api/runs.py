@@ -15,6 +15,7 @@ from sqlalchemy import bindparam, text
 from sqlalchemy.engine import RowMapping
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
+from app.config import get_settings
 from app.db import get_engine
 from app.deps import ensure_project_match, require_project_id, require_user_id
 from app.errors import APIError
@@ -35,6 +36,7 @@ from app.schemas.runs import (
     SimulationRunCreate,
     TranscriptTurn,
 )
+from app.schemas.suites import SuiteRunCreateResponse
 from app.verdict import format_score, verdict_for_run
 from app.workers.rollup import close_parent_now, maybe_close_parent
 
@@ -664,9 +666,9 @@ def _validate_dummy_identity(identity: DummyIdentity) -> None:
 
 _INSERT_RUN_SQL = text(
     "INSERT INTO runs (id, project_id, type, agent_id, scenario_id, config, idempotency_key, "
-    " created_by_user_id, trigger) "
+    " created_by_user_id, trigger, rerun_of_run_id) "
     "VALUES (:id, :project_id, :type, :agent_id, :scenario_id, CAST(:config AS jsonb), "
-    " :idempotency_key, :user_id, :trigger) "
+    " :idempotency_key, :user_id, :trigger, :rerun_of_run_id) "
     # B2.5-01: matches the composite UNIQUE(project_id, idempotency_key) --
     # migration 005's fix for the cross-project collision this used to
     # allow when the constraint (and this conflict target) were global.
@@ -686,6 +688,7 @@ async def _create_run(
     idempotency_key: str | None,
     user_id: str,
     trigger: str = "manual",
+    rerun_of_run_id: uuid.UUID | None = None,
 ) -> uuid.UUID:
     """Concurrency pre-check + idempotent insert in one transaction (spine
     §5). This is a fail-fast advisory check, not the authoritative gate --
@@ -701,7 +704,10 @@ async def _create_run(
     API call today, hence the 'manual' default -- E3's GitHub Action
     ('ci') and the future `schedules` table ('schedule') are the callers
     that will pass something else once they exist; the param is threaded
-    through now so wiring them up later doesn't touch this function."""
+    through now so wiring them up later doesn't touch this function.
+
+    `rerun_of_run_id` (B2.6-04): only rerun_run passes this; every other
+    caller leaves it None."""
     async with engine.connect() as conn, conn.begin():
         agent_row = (
             (
@@ -747,6 +753,7 @@ async def _create_run(
                         "idempotency_key": idempotency_key,
                         "user_id": user_id,
                         "trigger": trigger,
+                        "rerun_of_run_id": rerun_of_run_id,
                     },
                 )
             )
@@ -952,17 +959,60 @@ async def cancel_run(
         await conn.execute(text("SELECT pg_notify('run_events', :run_id)"), {"run_id": str(run_id)})
 
 
+_RERUN_CHILDREN_SQL = text(
+    "SELECT id, status, metrics, scenario_id FROM runs "
+    "WHERE parent_run_id = :parent_id ORDER BY created_at"
+)
+
+# No Idempotency-Key/ON CONFLICT here (unlike _INSERT_RUN_SQL /
+# app.api.suites._INSERT_SUITE_PARENT_SQL) -- rerun is explicitly NOT
+# idempotent, matching this endpoint's pre-existing single-run behavior:
+# every click creates a new run/batch, never returns a prior one.
+_INSERT_RERUN_PARENT_SQL = text(
+    "INSERT INTO runs (id, project_id, type, agent_id, config, created_by_user_id, "
+    " trigger, rerun_of_run_id) "
+    "VALUES (:id, :project_id, :type, :agent_id, CAST(:config AS jsonb), :user_id, "
+    " :trigger, :rerun_of_run_id) "
+    "RETURNING id"
+)
+
+# type='simulation' -- same reasoning as app.api.suites._INSERT_CHILD_RUN_SQL:
+# real single-scenario simulation runs, not re-cloned as whatever the
+# parent's own type is.
+_INSERT_RERUN_CHILD_SQL = text(
+    "INSERT INTO runs (id, project_id, type, agent_id, scenario_id, parent_run_id, config, "
+    " created_by_user_id, trigger) "
+    "VALUES (:id, :project_id, 'simulation', :agent_id, :scenario_id, :parent_run_id, "
+    " CAST(:config AS jsonb), :user_id, :trigger)"
+)
+
+
 @router.post(
     "/v1/runs/{run_id}/rerun",
-    response_model=RunCreateResponse,
+    response_model=RunCreateResponse | SuiteRunCreateResponse,
     status_code=status.HTTP_202_ACCEPTED,
 )
 async def rerun_run(
     run_id: uuid.UUID,
+    only: Literal["failed", "all"] = Query(default="all"),
     user_id: str = Depends(require_user_id),
     project_id: uuid.UUID = Depends(require_project_id),
     engine: AsyncEngine = Depends(get_engine),
-) -> RunCreateResponse:
+) -> RunCreateResponse | SuiteRunCreateResponse:
+    """B2.6-04. `run_id` naming a batch parent (has children) clones a new
+    batch: same agent, same scenario set (optionally restricted to
+    children whose last result was a 'fail' verdict -- `verdict_for_run`,
+    the same fold used everywhere else a run's pass/warn/fail/idle status
+    is shown, not a raw `status = 'failed'` check, since a `completed` run
+    with a failing judged assertion is what "failed" means to a human
+    looking at the History table). `rerun_of_run_id` records the lineage
+    (E8's future diff view) on the new parent; new children don't get
+    their own (no per-child lineage tracking yet -- batch-level is what
+    this ticket asks for).
+
+    `run_id` naming a plain run (pre-B2.6, or a Call) takes the original
+    single-row clone path unchanged, now also stamping `rerun_of_run_id`.
+    """
     async with engine.connect() as conn:
         row = (
             (
@@ -981,14 +1031,101 @@ async def rerun_run(
         raise APIError("not_found", "run not found", status.HTTP_404_NOT_FOUND)
     ensure_project_match(row["project_id"], project_id)
 
-    new_run_id = await _create_run(
-        engine,
-        project_id=project_id,
-        run_type=row["type"],
-        agent_id=row["agent_id"],
-        scenario_id=row["scenario_id"],
-        config=row["config"] or {},
-        idempotency_key=None,
-        user_id=user_id,
-    )
-    return RunCreateResponse(run_id=str(new_run_id))
+    async with engine.connect() as conn:
+        has_children = (await conn.execute(_HAS_CHILDREN_SQL, {"id": run_id})).first() is not None
+
+    if not has_children:
+        new_run_id = await _create_run(
+            engine,
+            project_id=project_id,
+            run_type=row["type"],
+            agent_id=row["agent_id"],
+            scenario_id=row["scenario_id"],
+            config=row["config"] or {},
+            idempotency_key=None,
+            user_id=user_id,
+            rerun_of_run_id=run_id,
+        )
+        return RunCreateResponse(run_id=str(new_run_id))
+
+    async with engine.connect() as conn:
+        # _create_run does this lookup for the leaf path (agent scoped to
+        # project_id, 404 if the agent belongs to -- or looks like it
+        # belongs to -- another project); this path bypasses _create_run
+        # entirely, so it needs the same check explicitly. B2.5-01: an
+        # agent from another project must 404 exactly like one that
+        # doesn't exist, never leaking that it belongs to someone else.
+        agent_visible = (
+            await conn.execute(
+                text("SELECT 1 FROM agents WHERE id = :id AND project_id = :project_id"),
+                {"id": row["agent_id"], "project_id": project_id},
+            )
+        ).first() is not None
+        if not agent_visible:
+            raise APIError("not_found", "agent not found", status.HTTP_404_NOT_FOUND)
+
+        children = (
+            (await conn.execute(_RERUN_CHILDREN_SQL, {"parent_id": run_id})).mappings().all()
+        )
+
+    # Rerunning while the source batch is still executing would double up
+    # queued work against the same agent for calls already in flight --
+    # reject rather than silently allow it; the caller can retry once the
+    # original batch finishes.
+    if any(c["status"] in _LIVE_STATUSES for c in children):
+        raise APIError(
+            "conflict",
+            "cannot rerun a batch that still has live children",
+            status.HTTP_409_CONFLICT,
+        )
+
+    if only == "failed":
+        children = [c for c in children if verdict_for_run(c["status"], c["metrics"]) == "fail"]
+    if not children:
+        raise APIError(
+            "validation_error",
+            "no matching children to rerun" if only == "failed" else "batch has no children",
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+        )
+
+    cap = get_settings().suite_run_batch_cap
+    if len(children) > cap:
+        raise APIError(
+            "batch_too_large",
+            f"this rerun would queue {len(children)} calls, over the cap of {cap}",
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+        )
+
+    scenario_ids = [c["scenario_id"] for c in children]
+    async with engine.connect() as conn, conn.begin():
+        new_parent_id = uuid.uuid4()
+        await conn.execute(
+            _INSERT_RERUN_PARENT_SQL,
+            {
+                "id": new_parent_id,
+                "project_id": project_id,
+                "type": row["type"],
+                "agent_id": row["agent_id"],
+                "config": json.dumps({"scenarioIds": [str(sid) for sid in scenario_ids]}),
+                "user_id": user_id,
+                "trigger": "manual",
+                "rerun_of_run_id": run_id,
+            },
+        )
+        await conn.execute(
+            _INSERT_RERUN_CHILD_SQL,
+            [
+                {
+                    "id": uuid.uuid4(),
+                    "project_id": project_id,
+                    "agent_id": row["agent_id"],
+                    "scenario_id": scenario_id,
+                    "parent_run_id": new_parent_id,
+                    "config": json.dumps({}),
+                    "user_id": user_id,
+                    "trigger": "manual",
+                }
+                for scenario_id in scenario_ids
+            ],
+        )
+    return SuiteRunCreateResponse(parent_run_id=str(new_parent_id), call_count=len(scenario_ids))
