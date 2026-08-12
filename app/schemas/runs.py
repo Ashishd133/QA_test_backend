@@ -48,6 +48,10 @@ class RunCost(APIModel):
 
 
 EndReason = Literal["completed", "caller_ended", "agent_ended", "timeout", "cancelled", "error"]
+# B2.6-03: how a run was started -- read-only here (populated at insert
+# time, app/api/runs.py's _create_run / app/api/suites.py's fan-out
+# insert), not settable via any request body.
+Trigger = Literal["manual", "schedule", "ci", "api"]
 
 
 class DashboardRunRow(APIModel):
@@ -69,6 +73,7 @@ class DashboardRunRow(APIModel):
     # *implicit* call, per this ticket's "do not special-case them" rule.
     is_parent: bool
     parent_run_id: str | None = None
+    trigger: Trigger
 
 
 class RunAggregate(APIModel):
@@ -144,6 +149,7 @@ class RunDetail(APIModel):
     # "do not special-case a single implicit call" rule.
     is_parent: bool
     parent_run_id: str | None = None
+    trigger: Trigger
     # Present iff is_parent -- a Call's own detail has no aggregate to
     # show (it has no children of its own).
     aggregate: RunAggregate | None = None

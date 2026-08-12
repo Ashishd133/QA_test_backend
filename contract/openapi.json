@@ -520,6 +520,16 @@
           "suite": {
             "title": "Suite",
             "type": "string"
+          },
+          "trigger": {
+            "enum": [
+              "manual",
+              "schedule",
+              "ci",
+              "api"
+            ],
+            "title": "Trigger",
+            "type": "string"
           }
         },
         "required": [
@@ -531,7 +541,8 @@
           "duration",
           "runId",
           "projectId",
-          "isParent"
+          "isParent",
+          "trigger"
         ],
         "title": "DashboardRunRow",
         "type": "object"
@@ -1498,6 +1509,16 @@
             "title": "Transcript",
             "type": "array"
           },
+          "trigger": {
+            "enum": [
+              "manual",
+              "schedule",
+              "ci",
+              "api"
+            ],
+            "title": "Trigger",
+            "type": "string"
+          },
           "wer": {
             "title": "Wer",
             "type": "string"
@@ -1521,7 +1542,8 @@
           "transcript",
           "resultAssertions",
           "latencySeries",
-          "isParent"
+          "isParent",
+          "trigger"
         ],
         "title": "RunDetail",
         "type": "object"

@@ -117,6 +117,10 @@ async def test_run_detail_matches_frontend_run_shape_after_fake_runner_completes
         assert body["projectId"] == str(DEFAULT_PROJECT_ID)
         assert body["endReason"] is None
         assert body["cost"] is None
+        # B2.6-03: server_default'd, not set explicitly by this test's raw
+        # INSERT -- proves GET /v1/runs/{id} surfaces `trigger` for every
+        # run, not just ones created through the API's own insert path.
+        assert body["trigger"] == "manual"
 
         transcript = body["transcript"]
         assert len(transcript) == 4
@@ -178,3 +182,38 @@ async def test_list_runs_filters_by_status_and_agent() -> None:
     finally:
         await _cleanup(engine, agent_id)
         await _cleanup(engine, other_agent_id)
+
+
+async def test_list_runs_surfaces_trigger_without_inspecting_config() -> None:
+    """B2.6-03's own 'Done when': a scheduled run and a manual run are
+    distinguishable in GET /v1/runs via `trigger` alone."""
+    engine = _test_engine()
+    agent_id = await _make_agent(engine, "Trigger Agent")
+    async with engine.connect() as conn, conn.begin():
+        manual_id = (
+            await conn.execute(
+                text(
+                    "INSERT INTO runs (id, type, agent_id, created_by_user_id, trigger) "
+                    "VALUES (:id, 'simulation', :agent_id, 'user-1', 'manual') RETURNING id"
+                ),
+                {"id": uuid.uuid4(), "agent_id": agent_id},
+            )
+        ).scalar_one()
+        scheduled_id = (
+            await conn.execute(
+                text(
+                    "INSERT INTO runs (id, type, agent_id, created_by_user_id, trigger) "
+                    "VALUES (:id, 'simulation', :agent_id, 'user-1', 'schedule') RETURNING id"
+                ),
+                {"id": uuid.uuid4(), "agent_id": agent_id},
+            )
+        ).scalar_one()
+    try:
+        async with await _client() as client:
+            response = await client.get("/v1/runs", params={"agentId": str(agent_id)})
+        assert response.status_code == 200
+        by_id = {r["id"]: r["trigger"] for r in response.json()}
+        assert by_id[str(manual_id)] == "manual"
+        assert by_id[str(scheduled_id)] == "schedule"
+    finally:
+        await _cleanup(engine, agent_id)

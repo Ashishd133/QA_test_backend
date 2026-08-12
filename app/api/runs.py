@@ -210,7 +210,7 @@ def _run_cost(raw: dict[str, object] | None) -> RunCost | None:
 
 _LIST_RUNS_SQL = text(
     "SELECT r.id, r.status, r.metrics, r.created_at, r.started_at, r.ended_at, "
-    "       r.project_id, r.end_reason, r.cost, r.parent_run_id, "
+    "       r.project_id, r.end_reason, r.cost, r.parent_run_id, r.trigger, "
     "       a.name AS agent_name, s.name AS suite_name "
     "FROM runs r "
     "JOIN agents a ON a.id = r.agent_id "
@@ -252,6 +252,7 @@ def _dashboard_run_row(row: RowMapping) -> DashboardRunRow:
         cost=_run_cost(row["cost"]),
         is_parent=row["parent_run_id"] is None,
         parent_run_id=str(row["parent_run_id"]) if row["parent_run_id"] is not None else None,
+        trigger=row["trigger"],
     )
 
 
@@ -426,7 +427,7 @@ async def list_runs(
 
 _RUN_DETAIL_SQL = text(
     "SELECT r.id, r.type, r.status, r.metrics, r.created_at, r.started_at, r.ended_at, "
-    "       r.project_id, r.end_reason, r.cost, r.recording_url, r.parent_run_id, "
+    "       r.project_id, r.end_reason, r.cost, r.recording_url, r.parent_run_id, r.trigger, "
     "       r.scenario_id, sc.persona, "
     "       a.name AS agent_name, a.transport, a.language, "
     "       sc.name AS scenario_name, s.name AS suite_name "
@@ -628,6 +629,7 @@ async def get_run(
         latency_series=latency_series,
         is_parent=row["parent_run_id"] is None,
         parent_run_id=str(row["parent_run_id"]) if row["parent_run_id"] is not None else None,
+        trigger=row["trigger"],
         aggregate=aggregate,
     )
 
@@ -662,9 +664,9 @@ def _validate_dummy_identity(identity: DummyIdentity) -> None:
 
 _INSERT_RUN_SQL = text(
     "INSERT INTO runs (id, project_id, type, agent_id, scenario_id, config, idempotency_key, "
-    " created_by_user_id) "
+    " created_by_user_id, trigger) "
     "VALUES (:id, :project_id, :type, :agent_id, :scenario_id, CAST(:config AS jsonb), "
-    " :idempotency_key, :user_id) "
+    " :idempotency_key, :user_id, :trigger) "
     # B2.5-01: matches the composite UNIQUE(project_id, idempotency_key) --
     # migration 005's fix for the cross-project collision this used to
     # allow when the constraint (and this conflict target) were global.
@@ -683,6 +685,7 @@ async def _create_run(
     config: dict[str, object],
     idempotency_key: str | None,
     user_id: str,
+    trigger: str = "manual",
 ) -> uuid.UUID:
     """Concurrency pre-check + idempotent insert in one transaction (spine
     §5). This is a fail-fast advisory check, not the authoritative gate --
@@ -692,7 +695,13 @@ async def _create_run(
 
     `agent_id` is looked up scoped to `project_id` (B2.5-01: hard scoping)
     -- an agent from another project 404s exactly like one that doesn't
-    exist, never leaking that it belongs to someone else."""
+    exist, never leaking that it belongs to someone else.
+
+    `trigger` (B2.6-03): every call site through this module is a direct
+    API call today, hence the 'manual' default -- E3's GitHub Action
+    ('ci') and the future `schedules` table ('schedule') are the callers
+    that will pass something else once they exist; the param is threaded
+    through now so wiring them up later doesn't touch this function."""
     async with engine.connect() as conn, conn.begin():
         agent_row = (
             (
@@ -737,6 +746,7 @@ async def _create_run(
                         "config": json.dumps(config),
                         "idempotency_key": idempotency_key,
                         "user_id": user_id,
+                        "trigger": trigger,
                     },
                 )
             )

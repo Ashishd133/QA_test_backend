@@ -344,9 +344,9 @@ _ALL_SCENARIO_IDS_FOR_SUITE_SQL = text(
 # other on the very first insert.
 _INSERT_SUITE_PARENT_SQL = text(
     "INSERT INTO runs (id, project_id, type, agent_id, config, idempotency_key, "
-    " created_by_user_id) "
+    " created_by_user_id, trigger) "
     "VALUES (:id, :project_id, 'suite', :agent_id, CAST(:config AS jsonb), :idempotency_key, "
-    " :user_id) "
+    " :user_id, :trigger) "
     "ON CONFLICT (project_id, idempotency_key) DO NOTHING "
     "RETURNING id"
 )
@@ -363,12 +363,16 @@ _CHILD_COUNT_SQL = text("SELECT count(*) FROM runs WHERE parent_run_id = :parent
 # like a call created via POST /v1/simulations/runs. parent_run_id is what
 # makes them Calls under the 'suite' parent rather than standalone Test
 # Runs (B2.5-03), and what excludes the parent itself from claim.py's
-# candidate scan (B3-03: "childless" claimability).
+# candidate scan (B3-03: "childless" claimability). trigger is stamped
+# with the SAME value as the parent (B2.6-03: "children inherit") -- not
+# left to its own server_default, which would silently disagree with the
+# parent the moment a non-'manual' caller (E3's GitHub Action, a future
+# schedule) exists.
 _INSERT_CHILD_RUN_SQL = text(
     "INSERT INTO runs (id, project_id, type, agent_id, scenario_id, parent_run_id, config, "
-    " created_by_user_id) "
+    " created_by_user_id, trigger) "
     "VALUES (:id, :project_id, 'simulation', :agent_id, :scenario_id, :parent_run_id, "
-    " CAST(:config AS jsonb), :user_id)"
+    " CAST(:config AS jsonb), :user_id, :trigger)"
 )
 
 
@@ -468,6 +472,12 @@ async def run_suite(
                 status.HTTP_422_UNPROCESSABLE_CONTENT,
             )
 
+        # B2.6-03: no caller passes anything but 'manual' yet (same as
+        # app.api.runs._create_run's default) -- named here rather than
+        # inlined twice below so the parent and every child are provably
+        # stamped with the same value ("children inherit").
+        trigger = "manual"
+
         parent_id = uuid.uuid4()
         inserted = (
             (
@@ -480,6 +490,7 @@ async def run_suite(
                         "config": json.dumps({"scenarioIds": [str(sid) for sid in scenario_ids]}),
                         "idempotency_key": idempotency_key,
                         "user_id": user_id,
+                        "trigger": trigger,
                     },
                 )
             )
@@ -518,6 +529,7 @@ async def run_suite(
                     "parent_run_id": parent_id,
                     "config": json.dumps({}),
                     "user_id": user_id,
+                    "trigger": trigger,
                 }
                 for child_id, scenario_id in zip(child_ids, scenario_ids, strict=True)
             ],

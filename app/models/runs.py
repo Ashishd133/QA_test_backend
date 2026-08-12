@@ -26,6 +26,10 @@ class Run(Base, OrgScopedMixin, TimestampMixin):
             "status IN ('queued', 'claimed', 'running', 'completed', 'cancelled', 'failed')",
             name="status_valid",
         ),
+        CheckConstraint(
+            "trigger IN ('manual', 'schedule', 'ci', 'api')",
+            name="trigger_valid",
+        ),
         # B2-06: nullable (see Agent.project_id's comment) -- NULL never
         # violates a CHECK, so this constrains only non-null values.
         CheckConstraint(
@@ -38,6 +42,10 @@ class Run(Base, OrgScopedMixin, TimestampMixin):
     id: Mapped[uuid.UUID] = uuid_pk()
     type: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default="queued")
+    # B2.6-03: how this run was started. Children inherit the parent's
+    # value (set explicitly at insert time, not derived) -- see
+    # app/api/runs.py/app/api/suites.py's insert sites.
+    trigger: Mapped[str] = mapped_column(Text, nullable=False, server_default="manual")
     # B2.5-01: NOT NULL -- see Agent.project_id's comment.
     project_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("projects.id"), nullable=False, server_default=str(DEFAULT_PROJECT_ID)
