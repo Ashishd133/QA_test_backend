@@ -36,7 +36,7 @@ from app.schemas.runs import (
     TranscriptTurn,
 )
 from app.verdict import format_score, verdict_for_run
-from app.workers.rollup import maybe_close_parent
+from app.workers.rollup import close_parent_now, maybe_close_parent
 
 router = APIRouter(tags=["runs"])
 
@@ -857,6 +857,13 @@ async def create_redteam_run(
 
 _CANCELLABLE_STATUSES = ("queued", "claimed", "running")
 
+_HAS_CHILDREN_SQL = text("SELECT 1 FROM runs WHERE parent_run_id = :id LIMIT 1")
+
+_CANCEL_LIVE_CHILDREN_SQL = text(
+    "UPDATE runs SET status = 'cancelled' WHERE parent_run_id = :id AND status IN :statuses "
+    "RETURNING id"
+).bindparams(bindparam("statuses", expanding=True))
+
 
 @router.post("/v1/runs/{run_id}/cancel", status_code=status.HTTP_204_NO_CONTENT)
 async def cancel_run(
@@ -869,7 +876,24 @@ async def cancel_run(
     `done` event is emitted later by whichever executor is running this run
     (app.workers.fake_runner), which checks this flag every turn. A queued
     run that never gets claimed just stays 'cancelled' with an empty event
-    log, which B1-03's detail reduction already handles gracefully."""
+    log, which B1-03's detail reduction already handles gracefully.
+
+    B2.6-02: `run_id` naming a batch parent (has children) cascades --
+    every still-live child is cancelled in the SAME transaction (a bulk
+    version of exactly this endpoint's own single-row update), and the
+    parent is closed immediately afterward via
+    app.workers.rollup.close_parent_now rather than the raw UPDATE below,
+    since every child is already terminal by the time that call runs and
+    there's no later child-side status flip to trigger the normal
+    maybe_close_parent(child_id) path from. A batch parent's own `status`
+    is always 'queued' up to that point (B3-03: it's never claimed --
+    excluded from claim.py's candidate scan for having children), so the
+    `_CANCELLABLE_STATUSES` gate above still does the right thing for a
+    repeat cancel on an already-closed batch.
+
+    `run_id` naming a plain Test Run with no children (pre-B2.6, still the
+    common case) takes the original single-row path unchanged below.
+    """
     async with engine.connect() as conn, conn.begin():
         row = (
             (
@@ -888,10 +912,33 @@ async def cancel_run(
             raise APIError(
                 "conflict", "run has already reached a terminal state", status.HTTP_409_CONFLICT
             )
-        await conn.execute(
-            text("UPDATE runs SET status = 'cancelled' WHERE id = :id"), {"id": run_id}
-        )
-        await maybe_close_parent(conn, run_id)
+
+        has_children = (
+            await conn.execute(_HAS_CHILDREN_SQL, {"id": run_id})
+        ).first() is not None
+
+        if has_children:
+            cancelled_child_ids = (
+                (
+                    await conn.execute(
+                        _CANCEL_LIVE_CHILDREN_SQL,
+                        {"id": run_id, "statuses": list(_CANCELLABLE_STATUSES)},
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            await close_parent_now(conn, run_id)
+            for child_id in cancelled_child_ids:
+                await conn.execute(
+                    text("SELECT pg_notify('run_events', :id)"), {"id": str(child_id)}
+                )
+        else:
+            await conn.execute(
+                text("UPDATE runs SET status = 'cancelled' WHERE id = :id"), {"id": run_id}
+            )
+            await maybe_close_parent(conn, run_id)
+
         await conn.execute(text("SELECT pg_notify('run_events', :run_id)"), {"run_id": str(run_id)})
 
 

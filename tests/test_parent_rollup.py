@@ -199,6 +199,9 @@ async def test_maybe_close_parent_is_a_noop_once_parent_already_terminal(
 async def test_cancel_run_closes_parent_when_it_was_the_last_live_child(
     engine: AsyncEngine,
 ) -> None:
+    """B2.6-02: the parent closes 'cancelled', not 'completed', once any
+    child ended up cancelled -- distinct from test_parent_stays_open_until_
+    last_child_terminal's all-'completed'/'failed' case below."""
     async with engine.connect() as conn, conn.begin():
         agent_id = await _seed_agent(conn)
         parent_id = await _seed_parent(conn, agent_id)
@@ -210,7 +213,7 @@ async def test_cancel_run_closes_parent_when_it_was_the_last_live_child(
         assert response.status_code == 204
 
         row = await _run_row(engine, parent_id)
-        assert row["status"] == "completed"
+        assert row["status"] == "cancelled"
         assert row["ended_at"] is not None
         _ = done_child
     finally:
