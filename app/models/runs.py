@@ -73,6 +73,10 @@ class Run(Base, OrgScopedMixin, TimestampMixin):
     # writes it, in the same completion transaction as `metrics`.
     end_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     cost: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)
+    # Migration 004 -- present in the DB since before this ORM layer existed
+    # and missing from this model until now (autogenerate was about to drop
+    # it as B2.7-01's "unrelated" diff, which is how the gap surfaced).
+    recording_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(nullable=True)
     ended_at: Mapped[datetime | None] = mapped_column(nullable=True)
     metrics: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)
