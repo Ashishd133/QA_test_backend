@@ -44,6 +44,7 @@ from typing import Literal
 
 from loguru import logger
 from sqlalchemy import text
+from sqlalchemy.engine import RowMapping
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from app.config import get_settings
@@ -97,7 +98,14 @@ _CANCEL_WATCHER_SHUTDOWN_TIMEOUT_SECONDS = 5.0
 # `runs` row the heartbeat and reaper already touch.
 _CANCEL_POLL_INTERVAL_SECONDS = 3.0
 
-_SCENARIO_SQL = text("SELECT persona, script, assertions FROM scenarios WHERE id = :id")
+_SCENARIO_SQL = text(
+    "SELECT sc.persona, sc.script, sc.assertions, "
+    "       p.voice AS persona_voice, p.language AS persona_language, "
+    "       p.accent AS persona_accent, p.emotion AS persona_emotion, "
+    "       p.speaking_rate AS persona_speaking_rate, p.traits AS persona_traits "
+    "FROM scenarios sc LEFT JOIN personas p ON p.id = sc.persona_id "
+    "WHERE sc.id = :id"
+)
 
 
 def _load_assertion_specs(raw: object) -> list[AssertionSpec]:
@@ -121,12 +129,32 @@ def _load_assertion_specs(raw: object) -> list[AssertionSpec]:
     return specs
 
 
-def _build_persona_spec(persona_name: str, script: object) -> PersonaSpec:
+def _build_persona_spec(persona_name: str, script: object, persona_row: RowMapping) -> PersonaSpec:
+    """`persona_row` carries the columns `_SCENARIO_SQL`'s LEFT JOIN adds --
+    all None when the scenario has no linked `persona_id` (the common case
+    today; see PersonaSpec's own docstring for why every field here stays
+    optional rather than becoming a hard requirement)."""
     script_dict: dict[str, object] = script if isinstance(script, dict) else {}
-    traits = script_dict.get("traits")
+
+    # Persona-row traits first (the authoritative, editable set once B2.7-02
+    # ships a UI for it), script-level traits second so scenario-specific
+    # authoring can still override a specific key -- in practice these two
+    # sources don't currently overlap for any seeded scenario (either a
+    # scenario has script content or a linked persona_id, not both), but
+    # there's no reason to make that an assumption the merge order depends on.
+    persona_row_traits = persona_row["persona_traits"]
+    traits: dict[str, object] = dict(persona_row_traits) if persona_row_traits else {}
+    script_traits = script_dict.get("traits")
+    if isinstance(script_traits, dict):
+        traits.update(script_traits)
+    if persona_row["persona_accent"]:
+        traits.setdefault("accent", persona_row["persona_accent"])
+    if persona_row["persona_emotion"]:
+        traits.setdefault("emotion", persona_row["persona_emotion"])
+
     return PersonaSpec(
         name=persona_name,
-        traits=traits if isinstance(traits, dict) else {},
+        traits=traits,
         goal=str(
             script_dict.get("goal")
             or (
@@ -136,6 +164,9 @@ def _build_persona_spec(persona_name: str, script: object) -> PersonaSpec:
             )
         ),
         opening_line=str(script_dict.get("openingLine") or "Hi, I need some help with my account."),
+        voice=persona_row["persona_voice"],
+        language=persona_row["persona_language"],
+        speaking_rate=persona_row["persona_speaking_rate"],
     )
 
 
@@ -153,7 +184,7 @@ async def _load_scenario(
         raise ValueError(f"scenario {scenario_id} not found")
     has_real_script = isinstance(row["script"], dict) and bool(row["script"])
     return (
-        _build_persona_spec(row["persona"], row["script"]),
+        _build_persona_spec(row["persona"], row["script"], row),
         _load_assertion_specs(row["assertions"]),
         has_real_script,
     )

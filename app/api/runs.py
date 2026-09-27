@@ -930,9 +930,7 @@ async def cancel_run(
                 "conflict", "run has already reached a terminal state", status.HTTP_409_CONFLICT
             )
 
-        has_children = (
-            await conn.execute(_HAS_CHILDREN_SQL, {"id": run_id})
-        ).first() is not None
+        has_children = (await conn.execute(_HAS_CHILDREN_SQL, {"id": run_id})).first() is not None
 
         if has_children:
             cancelled_child_ids = (
@@ -1064,9 +1062,7 @@ async def rerun_run(
         if not agent_visible:
             raise APIError("not_found", "agent not found", status.HTTP_404_NOT_FOUND)
 
-        children = (
-            (await conn.execute(_RERUN_CHILDREN_SQL, {"parent_id": run_id})).mappings().all()
-        )
+        children = (await conn.execute(_RERUN_CHILDREN_SQL, {"parent_id": run_id})).mappings().all()
 
     # Rerunning while the source batch is still executing would double up
     # queued work against the same agent for calls already in flight --

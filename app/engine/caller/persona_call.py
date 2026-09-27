@@ -302,12 +302,26 @@ async def run_persona_call(
         stt = GoogleSTTService(
             credentials=google_credentials,
             credentials_path=google_credentials_path,
+            # Transcribes the reference agent's own audio, not the
+            # persona's -- a persona's language/accent (Indian/British/
+            # American English) describes how the *caller* sounds, not
+            # what language the agent replies in, so this is deliberately
+            # not persona-driven the way TTS below is.
             settings=GoogleSTTService.Settings(enable_word_time_offsets=True),
         )
+        # Built as explicit kwargs, not a dict splat: mypy can't verify a
+        # `**dict[str, object]` splat against Settings' precisely-typed
+        # keyword params (same reasoning as app.gcp_auth.
+        # google_credentials_kwargs' own docstring), and both `language`
+        # and `speaking_rate` are legitimately `| None` here already.
         tts = GoogleTTSService(
             credentials=google_credentials,
             credentials_path=google_credentials_path,
-            settings=GoogleTTSService.Settings(voice="en-US-Chirp3-HD-Charon"),
+            settings=GoogleTTSService.Settings(
+                voice=persona.voice or "en-US-Chirp3-HD-Charon",
+                language=persona.language,
+                speaking_rate=persona.speaking_rate,
+            ),
         )
         vad = VADProcessor(vad_analyzer=SileroVADAnalyzer())
         persona_runner = PersonaRunner(persona_caller, on_turn=on_turn, cancel_event=cancel_event)

@@ -75,24 +75,28 @@ _PERSONAS: list[dict[str, Any]] = [
     {
         "key": "persona:priya",
         "name": "Priya Sharma",
-        "voice": "alloy",
-        "language": "en",
+        # B2.7-02/migration 011: real Chirp3-HD voice + BCP-47 locale
+        # (was the OpenAI voice name "alloy" + bare "en" -- never
+        # validated against anything until the engine actually read
+        # these columns).
+        "voice": "en-IN-Chirp3-HD-Achernar",
+        "language": "en-IN",
         "accent": "Indian English",
         "traits": {"tone": "polite", "patience": "medium"},
     },
     {
         "key": "persona:frank",
         "name": "Frustrated Frank",
-        "voice": "verse",
-        "language": "en",
+        "voice": "en-US-Chirp3-HD-Charon",
+        "language": "en-US",
         "accent": "American English",
         "traits": {"tone": "impatient", "patience": "low"},
     },
     {
         "key": "persona:elena",
         "name": "Elderly Elena",
-        "voice": "shimmer",
-        "language": "en",
+        "voice": "en-GB-Chirp3-HD-Achernar",
+        "language": "en-GB",
         "accent": "British English",
         "traits": {"tone": "confused", "patience": "high"},
     },

@@ -1,4 +1,4 @@
-"""B1-06: GET /v1/metrics/dashboard + GET /v1/personas.
+"""B1-06: GET /v1/metrics/dashboard.
 
 All rolling metrics use the same two windows for consistency: the
 trailing 7 days (current) vs the 7 days before that (previous, for
@@ -9,8 +9,9 @@ that snapshot against what coverage looked like 7 days ago, using the
 current scenario count as the denominator both times (scenario counts
 change slowly enough that this simplification doesn't skew the number).
 
-No frontend type exists for Persona (nothing consumes it yet -- B1-08
-is what actually seeds rows), so its shape just mirrors the DB model.
+GET /v1/personas used to live here (B1-06, unscoped placeholder) -- moved
+to app/api/personas.py by B2.7-02, which gives it real project scoping and
+CRUD.
 """
 
 from dataclasses import dataclass
@@ -22,7 +23,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from app.db import get_engine
-from app.schemas.dashboard import DashboardMetrics, Outcome, Persona
+from app.schemas.dashboard import DashboardMetrics, Outcome
 from app.verdict import verdict_for_run
 
 router = APIRouter(tags=["dashboard"])
@@ -149,26 +150,3 @@ def _daily_counts(rows: list[_RunRow], start: datetime, end: datetime) -> list[i
         if 0 <= offset < len(counts):
             counts[offset] += 1
     return counts
-
-
-_PERSONAS_SQL = text(
-    "SELECT id, name, voice, language, accent, traits, builtin FROM personas ORDER BY name"
-)
-
-
-@router.get("/v1/personas", response_model=list[Persona])
-async def list_personas(engine: AsyncEngine = Depends(get_engine)) -> list[Persona]:
-    async with engine.connect() as conn:
-        rows = (await conn.execute(_PERSONAS_SQL)).mappings().all()
-    return [
-        Persona(
-            id=str(row["id"]),
-            name=row["name"],
-            voice=row["voice"],
-            language=row["language"],
-            accent=row["accent"],
-            traits=row["traits"],
-            builtin=row["builtin"],
-        )
-        for row in rows
-    ]

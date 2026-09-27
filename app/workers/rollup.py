@@ -51,9 +51,7 @@ _TALLY_SQL = text(
     "FROM runs WHERE parent_run_id = :parent_id"
 )
 
-_CLOSE_PARENT_SQL = text(
-    "UPDATE runs SET status = :status, ended_at = now() WHERE id = :id"
-)
+_CLOSE_PARENT_SQL = text("UPDATE runs SET status = :status, ended_at = now() WHERE id = :id")
 
 
 async def _close_if_done(conn: AsyncConnection, parent_id: uuid.UUID) -> None:

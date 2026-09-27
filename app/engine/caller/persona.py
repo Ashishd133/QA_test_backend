@@ -40,9 +40,21 @@ mid-call check-in.
 @dataclass(frozen=True)
 class PersonaSpec:
     name: str
-    traits: dict[str, str]
+    # object, not str: a persona row's `traits` jsonb (B2.7-02) can in
+    # principle hold non-string values; this is only ever interpolated
+    # into the system prompt via str(traits), which doesn't care.
+    traits: dict[str, object]
     goal: str
     opening_line: str
+    # B2.7-02: the persona's TTS identity, resolved from a real `personas`
+    # row via `persona_id` (app.engine.executor.simulation._load_scenario).
+    # None for scenarios with no linked persona -- run_persona_call falls
+    # back to its own long-standing default rather than requiring every
+    # caller of run_persona_call to supply these (scripts/record_eval_
+    # transcripts.py and friends still construct a bare PersonaSpec).
+    voice: str | None = None
+    language: str | None = None
+    speaking_rate: float | None = None
 
 
 @dataclass(frozen=True)

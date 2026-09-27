@@ -1,8 +1,7 @@
-"""Request/response models for GET /v1/metrics/dashboard and
-GET /v1/personas (B1-06). DashboardMetrics matches the frontend's
-src/types/index.ts verbatim; no Persona type was provided (nothing
-consumes it yet -- B1-08 is what actually seeds rows), so its shape
-follows the DB model (app/models/personas.py) directly.
+"""Request/response models for GET /v1/metrics/dashboard (B1-06).
+DashboardMetrics matches the frontend's src/types/index.ts verbatim.
+
+Persona used to live here -- moved to app/schemas/personas.py by B2.7-02.
 """
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -33,13 +32,3 @@ class DashboardMetrics(APIModel):
     scenario_coverage_delta: str
     trend_bars: list[int]
     outcome: Outcome
-
-
-class Persona(APIModel):
-    id: str
-    name: str
-    voice: str
-    language: str
-    accent: str | None = None
-    traits: dict[str, object]
-    builtin: bool

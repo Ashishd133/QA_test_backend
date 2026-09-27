@@ -450,9 +450,7 @@ async def run_suite(
             scenario_ids = requested_ids
         else:
             scenario_ids = list(
-                (
-                    await conn.execute(_ALL_SCENARIO_IDS_FOR_SUITE_SQL, {"suite_id": suite_id})
-                )
+                (await conn.execute(_ALL_SCENARIO_IDS_FOR_SUITE_SQL, {"suite_id": suite_id}))
                 .scalars()
                 .all()
             )
@@ -467,8 +465,7 @@ async def run_suite(
         if len(scenario_ids) > cap:
             raise APIError(
                 "batch_too_large",
-                f"this run would queue {len(scenario_ids)} calls, over the "
-                f"cap of {cap}",
+                f"this run would queue {len(scenario_ids)} calls, over the cap of {cap}",
                 status.HTTP_422_UNPROCESSABLE_CONTENT,
             )
 

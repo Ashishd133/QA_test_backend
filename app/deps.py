@@ -43,9 +43,11 @@ def require_user_id(request: Request) -> str:
 #     enforced when present (e.g. a BFF proxy can attach it server-side)
 #     and permissive when absent -- see app/api/runs.py's stream_run /
 #     _run_visible.
-#   - Dashboard v1 (app/api/dashboard.py) and personas: pre-B2.5 shapes
-#     kept alive for one release per B2.8-01's ticket text; scoped when
-#     B2.8 replaces them, not retrofitted here.
+#   - Dashboard v1 (app/api/dashboard.py): pre-B2.5 shape kept alive for
+#     one release per B2.8-01's ticket text; scoped when B2.8 replaces it,
+#     not retrofitted here. (Personas used to be listed here too --
+#     B2.7-02 gave app/api/personas.py real `require_project_id` scoping,
+#     so it's off this list now.)
 
 
 _PROJECT_VISIBLE_TO_CALLER_SQL = text(
