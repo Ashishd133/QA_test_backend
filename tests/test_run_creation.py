@@ -11,6 +11,7 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from app.api.test_profiles import resolve_dummy_identity
 from app.config import get_settings
 from app.main import app
 from tests.conftest import _test_engine, auth_headers, requires_test_db
@@ -67,6 +68,23 @@ async def _make_suite_and_scenario(engine: AsyncEngine, agent_id: uuid.UUID) -> 
 
 async def _cleanup(engine: AsyncEngine, agent_id: uuid.UUID) -> None:
     async with engine.connect() as conn, conn.begin():
+        # B2.7-03: a discovery run's dummy identity lives in its own
+        # test_profiles row (config = {"testProfileId": ...}), not inline
+        # in runs.config anymore -- collect those ids before the runs
+        # themselves are deleted below, or they'd be unreachable.
+        profile_ids = (
+            (
+                await conn.execute(
+                    text(
+                        "SELECT config->>'testProfileId' AS profile_id FROM runs "
+                        "WHERE agent_id = :id AND config ? 'testProfileId'"
+                    ),
+                    {"id": agent_id},
+                )
+            )
+            .scalars()
+            .all()
+        )
         await conn.execute(
             text(
                 "DELETE FROM run_events WHERE run_id IN (SELECT id FROM runs WHERE agent_id = :id)"
@@ -76,6 +94,14 @@ async def _cleanup(engine: AsyncEngine, agent_id: uuid.UUID) -> None:
         await conn.execute(text("DELETE FROM runs WHERE agent_id = :id"), {"id": agent_id})
         await conn.execute(text("DELETE FROM suites WHERE agent_id = :id"), {"id": agent_id})
         await conn.execute(text("DELETE FROM agents WHERE id = :id"), {"id": agent_id})
+        for profile_id in profile_ids:
+            await conn.execute(
+                text("DELETE FROM sensitive_access_log WHERE resource_id = :id"),
+                {"id": uuid.UUID(profile_id)},
+            )
+            await conn.execute(
+                text("DELETE FROM test_profiles WHERE id = :id"), {"id": uuid.UUID(profile_id)}
+            )
     await engine.dispose()
 
 
@@ -190,7 +216,11 @@ async def test_create_discovery_run_success() -> None:
                 .one()
             )
         assert row["type"] == "discovery"
-        assert row["config"]["dummyIdentity"]["name"] == "Priya Sharma"
+        # B2.7-03: the identity is a test_profiles row referenced by id,
+        # not inline plaintext -- resolve_dummy_identity is the read side.
+        resolved = await resolve_dummy_identity(engine, row["config"], user_id="user-1")
+        assert resolved is not None
+        assert resolved["name"] == "Priya Sharma"
     finally:
         await _cleanup(engine, agent_id)
 

@@ -16,6 +16,7 @@ from sqlalchemy.engine import RowMapping
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from app.config import get_settings
+from app.crypto import encrypt_json
 from app.db import get_engine
 from app.deps import ensure_project_match, require_project_id, require_user_id
 from app.errors import APIError
@@ -834,16 +835,57 @@ async def create_discovery_run(
     agent_id = uuid.UUID(body.agent_id)
     _validate_dummy_identity(body.dummy_identity)
 
-    run_id = await _create_run(
-        engine,
-        project_id=project_id,
-        run_type="discovery",
-        agent_id=agent_id,
-        scenario_id=None,
-        config={"dummyIdentity": body.dummy_identity.model_dump(mode="json", by_alias=True)},
-        idempotency_key=idempotency_key,
-        user_id=user_id,
-    )
+    # B2.7-03: the identity is encrypted at rest as a real test_profiles
+    # row, referenced by id -- not embedded as plaintext in runs.config
+    # the way it was before that ticket. app.api.test_profiles.
+    # resolve_dummy_identity is the read side (B5-03's future discovery
+    # executor, and the fallback for any pre-B2.7-03 run that still has
+    # the legacy inline shape).
+    identity_fields = body.dummy_identity.model_dump(mode="json", by_alias=True)
+    async with engine.connect() as conn, conn.begin():
+        profile_row = (
+            (
+                await conn.execute(
+                    text(
+                        "INSERT INTO test_profiles "
+                        "(id, project_id, name, fields, encrypted, created_by_user_id) "
+                        "VALUES (:id, :project_id, :name, CAST(:fields AS jsonb), true, :user_id) "
+                        "RETURNING id"
+                    ),
+                    {
+                        "id": uuid.uuid4(),
+                        "project_id": project_id,
+                        "name": "Discovery dummy identity",
+                        "fields": json.dumps(encrypt_json(identity_fields)),
+                        "user_id": user_id,
+                    },
+                )
+            )
+            .mappings()
+            .one()
+        )
+
+    # The profile insert above already committed (its own transaction, not
+    # _create_run's) -- if the run insert below fails (agent not found,
+    # concurrency limit), delete the now-orphaned profile rather than leave
+    # a dummy identity with no run pointing at it.
+    try:
+        run_id = await _create_run(
+            engine,
+            project_id=project_id,
+            run_type="discovery",
+            agent_id=agent_id,
+            scenario_id=None,
+            config={"testProfileId": str(profile_row["id"])},
+            idempotency_key=idempotency_key,
+            user_id=user_id,
+        )
+    except Exception:
+        async with engine.connect() as conn, conn.begin():
+            await conn.execute(
+                text("DELETE FROM test_profiles WHERE id = :id"), {"id": profile_row["id"]}
+            )
+        raise
     return RunCreateResponse(run_id=str(run_id))
 
 

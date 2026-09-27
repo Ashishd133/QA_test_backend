@@ -1,7 +1,17 @@
 from fastapi import FastAPI
 from fastapi.routing import APIRoute
 
-from app.api import agents, dashboard, healthz, organizations, personas, projects, runs, suites
+from app.api import (
+    agents,
+    dashboard,
+    healthz,
+    organizations,
+    personas,
+    projects,
+    runs,
+    suites,
+    test_profiles,
+)
 from app.config import get_settings
 from app.errors import register_exception_handlers
 from app.middleware import ServiceTokenMiddleware
@@ -27,6 +37,7 @@ def create_app() -> FastAPI:
     app.include_router(agents.router)
     app.include_router(dashboard.router)
     app.include_router(personas.router)
+    app.include_router(test_profiles.router)
     app.include_router(projects.router)
     app.include_router(organizations.router)
     app.openapi = lambda: build_openapi_schema(app)  # type: ignore[method-assign]

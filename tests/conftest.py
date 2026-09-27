@@ -1,13 +1,23 @@
 import asyncio.constants
+import os
 from collections.abc import AsyncGenerator
 
 import pytest
+from cryptography.fernet import Fernet
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from app.config import get_settings
 from app.db import build_engine, get_engine
 from app.main import app
 from app.models.projects import DEFAULT_PROJECT_ID
+
+# B2.7-03: app.crypto (test_profiles, later findings.evidence) fails
+# closed without FIELD_ENCRYPTION_KEYS -- a fresh, random, per-process key
+# is correct here (nothing in a test run needs encrypted data to survive
+# past that same run), and this has to happen before any test imports
+# app.crypto, hence setting it here at conftest module load rather than
+# in a fixture.
+os.environ.setdefault("FIELD_ENCRYPTION_KEYS", Fernet.generate_key().decode())
 
 # Diagnosed 2026-08 (see test-suite-resource-exhaustion memory): an
 # occasional stalled `getaddrinfo()` call -- a blocking OS call, run in the

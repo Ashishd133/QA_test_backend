@@ -24,8 +24,15 @@ class Settings(BaseSettings):
     # B2.6-01: hard cap on one suite-run fan-out's child count. Guards
     # against queueing thousands of rows from a suite × persona cross
     # product before persona/condition-profile expansion even lands
-    # (currently just len(scenario_ids), since those are 422'd non-empty).
+    # (currently just len(scenario_ids), those are 422'd non-empty).
     suite_run_batch_cap: int = 500
+    # B2.7-03: comma-separated Fernet keys (app.crypto). Sourced through
+    # Settings, not read from os.environ directly, so both local dev
+    # (.env, which BaseSettings loads but never copies into os.environ)
+    # and Railway (a real platform env var, no .env file in the image)
+    # resolve the same way -- the same reason database_url lives here
+    # rather than being read as a raw env var at each call site.
+    field_encryption_keys: str = ""
 
 
 @lru_cache

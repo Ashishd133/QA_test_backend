@@ -6,6 +6,7 @@ from app.models.organizations import Organization, OrgMembership
 from app.models.personas import Persona
 from app.models.projects import Project
 from app.models.runs import AssertionResult, Finding, Run, RunEvent, Turn
+from app.models.sensitive_access_log import SensitiveAccessLog
 from app.models.suites import Scenario, Suite
 from app.models.test_profiles import TestProfile
 
@@ -30,4 +31,5 @@ __all__ = [
     "Metric",
     "ScenarioMetric",
     "TestProfile",
+    "SensitiveAccessLog",
 ]
