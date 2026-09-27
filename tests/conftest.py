@@ -96,6 +96,15 @@ def _test_engine() -> AsyncEngine:
     return build_engine(database_url=get_settings().test_database_url, null_pool=True)
 
 
+def _no_test_db_engine() -> AsyncEngine:
+    raise RuntimeError(
+        "TEST_DATABASE_URL not configured -- this test reached Depends(get_engine) "
+        "without a test database available. Either it's missing @requires_test_db, "
+        "or CI genuinely needs one (ci.yml currently has none, by design: every "
+        "DB-touching test is skipped there, not run against production)."
+    )
+
+
 @pytest.fixture(autouse=True)
 async def _override_engine_for_tests() -> AsyncGenerator[None]:
     """Same event-loop-per-test issue as _test_engine()'s docstring, for
@@ -107,7 +116,24 @@ async def _override_engine_for_tests() -> AsyncGenerator[None]:
     -- previously this built a fresh, never-disposed engine on every single
     HTTP request across all 94 tests, the single largest source of the
     undisposed-engine leak (see _test_engine's docstring).
-    """
+
+    Without TEST_DATABASE_URL (CI, always -- no such secret is configured
+    there) `_test_engine()` itself raises before a connection is ever
+    attempted (`to_asyncpg_url` rejects an empty URL eagerly). Since this
+    fixture is autouse, that used to fail *every* test in the suite, not
+    just DB ones -- test_contract.py, test_healthz.py, and every other
+    file without `requires_test_db` errored on fixture setup alone. The
+    fallback below still overrides `get_engine`, just with something that
+    raises on first use instead of at fixture setup, so those tests pass
+    normally and only a test that actually reaches the DB (and is missing
+    its own `requires_test_db` skip) fails, loudly, with a clear cause --
+    never silently falling through to the production engine and its live
+    worker (the whole reason this fixture exists)."""
+    if not get_settings().test_database_url:
+        app.dependency_overrides[get_engine] = _no_test_db_engine
+        yield
+        app.dependency_overrides.pop(get_engine, None)
+        return
     engine = _test_engine()
     app.dependency_overrides[get_engine] = lambda: engine
     yield
