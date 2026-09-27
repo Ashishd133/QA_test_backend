@@ -756,6 +756,231 @@
         "title": "IntentData",
         "type": "object"
       },
+      "MetricCreate": {
+        "properties": {
+          "agentId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agentid"
+          },
+          "description": {
+            "default": "",
+            "title": "Description",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "builtin",
+              "llm_judge",
+              "python"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "outputType": {
+            "enum": [
+              "boolean",
+              "numeric",
+              "enum",
+              "tri_state"
+            ],
+            "title": "Outputtype",
+            "type": "string"
+          },
+          "samplingPct": {
+            "default": 100,
+            "title": "Samplingpct",
+            "type": "integer"
+          },
+          "spec": {
+            "additionalProperties": true,
+            "default": {},
+            "title": "Spec",
+            "type": "object"
+          }
+        },
+        "required": [
+          "name",
+          "kind",
+          "outputType"
+        ],
+        "title": "MetricCreate",
+        "type": "object"
+      },
+      "MetricDetail": {
+        "properties": {
+          "agentId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agentid"
+          },
+          "builtin": {
+            "title": "Builtin",
+            "type": "boolean"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "builtin",
+              "llm_judge",
+              "python"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "outputType": {
+            "enum": [
+              "boolean",
+              "numeric",
+              "enum",
+              "tri_state"
+            ],
+            "title": "Outputtype",
+            "type": "string"
+          },
+          "projectId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Projectid"
+          },
+          "samplingPct": {
+            "title": "Samplingpct",
+            "type": "integer"
+          },
+          "spec": {
+            "additionalProperties": true,
+            "title": "Spec",
+            "type": "object"
+          },
+          "status": {
+            "enum": [
+              "draft",
+              "active",
+              "archived"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "description",
+          "kind",
+          "outputType",
+          "spec",
+          "samplingPct",
+          "status",
+          "version",
+          "builtin"
+        ],
+        "title": "MetricDetail",
+        "type": "object"
+      },
+      "MetricUpdate": {
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "samplingPct": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Samplingpct"
+          },
+          "spec": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Spec"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "enum": [
+                  "draft",
+                  "active",
+                  "archived"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          }
+        },
+        "title": "MetricUpdate",
+        "type": "object"
+      },
       "MetricsData": {
         "properties": {
           "avgLatencyMs": {
@@ -1396,6 +1621,72 @@
           "categories"
         ],
         "title": "RedteamRunCreate",
+        "type": "object"
+      },
+      "ResolvedMetric": {
+        "description": "The effective metric set for one scenario -- one row per unique\n`name`, already resolved through the agent > project > builtin\nprecedence chain. `source_level` says which one won, so the UI (or a\ndebugging human) never has to re-derive precedence from raw rows.",
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "builtin",
+              "llm_judge",
+              "python"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "outputType": {
+            "enum": [
+              "boolean",
+              "numeric",
+              "enum",
+              "tri_state"
+            ],
+            "title": "Outputtype",
+            "type": "string"
+          },
+          "samplingPct": {
+            "title": "Samplingpct",
+            "type": "integer"
+          },
+          "sourceLevel": {
+            "enum": [
+              "builtin",
+              "project",
+              "agent"
+            ],
+            "title": "Sourcelevel",
+            "type": "string"
+          },
+          "spec": {
+            "additionalProperties": true,
+            "title": "Spec",
+            "type": "object"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "kind",
+          "outputType",
+          "spec",
+          "samplingPct",
+          "version",
+          "sourceLevel"
+        ],
+        "title": "ResolvedMetric",
         "type": "object"
       },
       "ResultAssertion": {
@@ -3081,6 +3372,71 @@
         ]
       }
     },
+    "/v1/metrics": {
+      "get": {
+        "description": "Every metric visible to the project: builtins, every project-level\nmetric, and every agent-level metric in the project -- unfiltered by\nwhat's actually attached to any scenario. This is the authoring/\nmanagement view; `/resolved` is the scenario-scoped effective view.",
+        "operationId": "list_metrics",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/MetricDetail"
+                  },
+                  "title": "Response List Metrics",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Metrics",
+        "tags": [
+          "metrics"
+        ]
+      },
+      "post": {
+        "operationId": "create_metric",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MetricCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MetricDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Metric",
+        "tags": [
+          "metrics"
+        ]
+      }
+    },
     "/v1/metrics/dashboard": {
       "get": {
         "operationId": "get_dashboard_metrics",
@@ -3099,6 +3455,181 @@
         "summary": "Get Dashboard Metrics",
         "tags": [
           "dashboard"
+        ]
+      }
+    },
+    "/v1/metrics/resolved": {
+      "get": {
+        "operationId": "get_resolved_metrics",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "scenarioId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Scenarioid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ResolvedMetric"
+                  },
+                  "title": "Response Get Resolved Metrics",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Resolved Metrics",
+        "tags": [
+          "metrics"
+        ]
+      }
+    },
+    "/v1/metrics/{metric_id}": {
+      "delete": {
+        "operationId": "delete_metric",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "metric_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Metric Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Metric",
+        "tags": [
+          "metrics"
+        ]
+      },
+      "get": {
+        "operationId": "get_metric",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "metric_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Metric Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MetricDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Metric",
+        "tags": [
+          "metrics"
+        ]
+      },
+      "patch": {
+        "operationId": "update_metric",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "metric_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Metric Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MetricUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MetricDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Metric",
+        "tags": [
+          "metrics"
         ]
       }
     },
