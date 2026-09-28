@@ -304,7 +304,11 @@ def _run_delta_row(row: RowMapping) -> RunDeltaRow:
         turns=row["turn_count"],
         duration_ms=duration_ms,
         latency_p95=row["latency_p95"],
-        goal_met=None,
+        # B2.7-09: goalMet lives in runs.metrics (written by the final
+        # judge pass, same place score/sentiment/summary already are) --
+        # absent (None) for a scenario with no goal configured, same as
+        # every run before this ticket landed.
+        goal_met=metrics.get("goalMet"),
     )
 
 
@@ -431,7 +435,7 @@ async def list_runs(
 _RUN_DETAIL_SQL = text(
     "SELECT r.id, r.type, r.status, r.metrics, r.created_at, r.started_at, r.ended_at, "
     "       r.project_id, r.end_reason, r.cost, r.recording_url, r.parent_run_id, r.trigger, "
-    "       r.scenario_id, sc.persona, "
+    "       r.scenario_id, sc.persona, sc.goal AS scenario_goal, "
     "       a.name AS agent_name, a.transport, a.language, "
     "       sc.name AS scenario_name, s.name AS suite_name "
     "FROM runs r "
@@ -634,6 +638,13 @@ async def get_run(
         parent_run_id=str(row["parent_run_id"]) if row["parent_run_id"] is not None else None,
         trigger=row["trigger"],
         aggregate=aggregate,
+        # B2.7-09: the third tier, distinct from result_assertions above --
+        # goal/goalMet/goalAnalysis/goalTurnRefs all None/[] for a scenario
+        # authored with no goal, or a run that predates this ticket.
+        goal=row["scenario_goal"],
+        goal_met=done_metrics.get("goalMet"),
+        goal_analysis=done_metrics.get("goalAnalysis"),
+        goal_turn_refs=done_metrics.get("goalTurnRefs") or [],
     )
 
 

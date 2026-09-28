@@ -109,7 +109,7 @@ _CANCEL_WATCHER_SHUTDOWN_TIMEOUT_SECONDS = 5.0
 _CANCEL_POLL_INTERVAL_SECONDS = 3.0
 
 _SCENARIO_SQL = text(
-    "SELECT sc.persona, sc.script, sc.assertions, "
+    "SELECT sc.persona, sc.script, sc.assertions, sc.goal AS scenario_goal, "
     "       p.voice AS persona_voice, p.language AS persona_language, "
     "       p.accent AS persona_accent, p.emotion AS persona_emotion, "
     "       p.speaking_rate AS persona_speaking_rate, p.traits AS persona_traits "
@@ -182,12 +182,20 @@ def _build_persona_spec(persona_name: str, script: object, persona_row: RowMappi
 
 async def _load_scenario(
     engine: AsyncEngine, scenario_id: uuid.UUID
-) -> tuple[PersonaSpec, list[AssertionSpec], bool]:
+) -> tuple[PersonaSpec, list[AssertionSpec], bool, str | None]:
     """Third element: whether the scenario carried a real `script` (as
     opposed to `_build_persona_spec`'s generic fallback content) -- see
     `run_simulation`'s own use of it. Most scenarios (app/seed.py's
     dashboard filler, e.g. "Card & Account Support") have none; only
-    scenarios meant to run against a real, live-registered agent do."""
+    scenarios meant to run against a real, live-registered agent do.
+
+    Fourth element: `scenarios.goal` -- B2.7-09's judged success criterion,
+    named `scenario_goal` everywhere downstream and never just `goal`,
+    because `PersonaSpec.goal` (built by `_build_persona_spec` from
+    `script.goal`) is a completely different concept: the synthetic
+    caller's own instruction for what to say/ask for, not what the final
+    judge evaluates. Conflating the two variable names is exactly how this
+    ticket's own two tiers would get silently merged back into one."""
     async with engine.connect() as conn:
         row = (await conn.execute(_SCENARIO_SQL, {"id": scenario_id})).mappings().first()
     if row is None:
@@ -197,6 +205,7 @@ async def _load_scenario(
         _build_persona_spec(row["persona"], row["script"], row),
         _load_assertion_specs(row["assertions"]),
         has_real_script,
+        row["scenario_goal"],
     )
 
 
@@ -305,7 +314,7 @@ async def _run_simulation_body(engine: AsyncEngine, claimed: ClaimedRun) -> None
         return
 
     try:
-        persona_spec, assertion_specs, has_real_script = await _load_scenario(
+        persona_spec, assertion_specs, has_real_script, scenario_goal = await _load_scenario(
             engine, claimed.scenario_id
         )
     except Exception:
@@ -377,6 +386,7 @@ async def _run_simulation_body(engine: AsyncEngine, claimed: ClaimedRun) -> None
             persona_spec,
             assertion_specs,
             resolved_metrics,
+            scenario_goal,
             cancel_event,
             cancel_watcher_task,
             heartbeat_task,
@@ -390,6 +400,7 @@ async def _run_simulation_traced(
     persona_spec: PersonaSpec,
     assertion_specs: list[AssertionSpec],
     resolved_metrics: list[RowMapping],
+    scenario_goal: str | None,
     cancel_event: asyncio.Event,
     cancel_watcher_task: asyncio.Task[None],
     heartbeat_task: asyncio.Task[None],
@@ -617,7 +628,10 @@ async def _run_simulation_traced(
                 "judge.final_evaluate", attributes=_span_attributes(run_id, parent_run_id)
             ):
                 final_verdict = await final_judge.evaluate(
-                    assertion_specs, judge_transcript, metrics=compiled.llm_judge_signals
+                    assertion_specs,
+                    judge_transcript,
+                    metrics=compiled.llm_judge_signals,
+                    goal=scenario_goal,
                 )
             final_usd_score = final_verdict.final_score / 100
 
@@ -702,6 +716,14 @@ async def _run_simulation_traced(
                     "interruptions": latency_clock.interruption_count,
                     "sentiment": final_verdict.sentiment,
                     "summary": final_verdict.summary,
+                    # B2.7-09: None/[] when the scenario had no goal to
+                    # evaluate (final_judge.evaluate's `goal` kwarg was
+                    # None) -- app/api/runs.py reads these straight off
+                    # this same runs.metrics jsonb, same place score/
+                    # sentiment/summary already live.
+                    "goalMet": final_verdict.goal_met,
+                    "goalAnalysis": final_verdict.goal_analysis,
+                    "goalTurnRefs": final_verdict.goal_turn_refs,
                 }
                 await conn.execute(
                     text(

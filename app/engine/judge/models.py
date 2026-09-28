@@ -105,6 +105,15 @@ class FinalVerdict(BaseModel):
     # with no metrics, every golden-eval case) is unaffected -- see
     # FinalJudge.evaluate's own optional `metrics` kwarg.
     metrics: list[MetricVerdict] = Field(default_factory=list)
+    # B2.7-09: the third, distinct tier -- one holistic judgment, not a
+    # list. None when no goal was given to evaluate (evaluate()'s `goal`
+    # kwarg is None -- most scenarios today, and every golden-eval case,
+    # which carry no goal field at all). `goal_analysis` is declared before
+    # `goal_met` for the same analysis-before-verdict reason `analysis`
+    # precedes `status` on AssertionFlip/FinalAssertionNote/MetricVerdict.
+    goal_analysis: str | None = None
+    goal_met: bool | None = None
+    goal_turn_refs: list[int] = Field(default_factory=list)
     sentiment: Literal["positive", "neutral", "negative"]
     summary: str
 

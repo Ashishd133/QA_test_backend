@@ -2071,6 +2071,47 @@
             ],
             "title": "Endreason"
           },
+          "goal": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Goal"
+          },
+          "goalAnalysis": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Goalanalysis"
+          },
+          "goalMet": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Goalmet"
+          },
+          "goalTurnRefs": {
+            "default": [],
+            "items": {
+              "type": "integer"
+            },
+            "title": "Goalturnrefs",
+            "type": "array"
+          },
           "id": {
             "title": "Id",
             "type": "string"

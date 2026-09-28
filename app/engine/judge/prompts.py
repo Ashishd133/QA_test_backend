@@ -20,12 +20,13 @@ TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
 # version") so a verdict can always be tied back to the exact rubric that
 # produced it.
 INCREMENTAL_PROMPT_VERSION = "incremental-v1"
-# B2.7-06: final.jinja2 gained a conditional "## Metrics" section -- the
-# version bumps because the template's own logic changed, even though
-# render_final_prompt([], transcript) (no metrics) still produces
-# byte-identical output to final-v1 (see
-# tests/test_metric_compilation.py's snapshot test).
-FINAL_PROMPT_VERSION = "final-v2"
+# B2.7-06/09: final.jinja2 gained conditional "## Metrics" and "## Goal"
+# sections -- the version bumps because the template's own logic changed,
+# even though render_final_prompt(assertions, transcript) (no metrics, no
+# goal) still produces byte-identical output to final-v1 (see
+# tests/test_metric_compilation.py's and tests/test_goal_evaluation.py's
+# snapshot tests).
+FINAL_PROMPT_VERSION = "final-v3"
 
 _env = Environment(
     loader=FileSystemLoader(TEMPLATES_DIR),
@@ -48,6 +49,9 @@ def render_final_prompt(
     assertions: list[AssertionSpec],
     transcript: list[TranscriptTurn],
     metrics: list[CompiledMetricSignal] | None = None,
+    goal: str | None = None,
 ) -> str:
     template = _env.get_template("final.jinja2")
-    return template.render(assertions=assertions, transcript=transcript, metrics=metrics or [])
+    return template.render(
+        assertions=assertions, transcript=transcript, metrics=metrics or [], goal=goal
+    )

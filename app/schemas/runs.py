@@ -153,6 +153,16 @@ class RunDetail(APIModel):
     # Present iff is_parent -- a Call's own detail has no aggregate to
     # show (it has no children of its own).
     aggregate: RunAggregate | None = None
+    # B2.7-09: the third tier, engine-distinct from result_assertions above
+    # -- one holistic judgment (Goal), not many per-turn flips (Assertions).
+    # `goal` is the scenario's configured goal text (None if it has none);
+    # goal_met/goal_analysis/goal_turn_refs come from the final judge pass
+    # and stay None/[] for any run that predates this ticket or whose
+    # scenario has no goal to evaluate.
+    goal: str | None = None
+    goal_met: bool | None = None
+    goal_analysis: str | None = None
+    goal_turn_refs: list[int] = []
 
 
 class DummyIdentity(APIModel):

@@ -198,8 +198,9 @@ class FinalJudge:
         assertions: list[AssertionSpec],
         transcript: list[TranscriptTurn],
         metrics: list[CompiledMetricSignal] | None = None,
+        goal: str | None = None,
     ) -> FinalVerdict:
-        prompt = render_final_prompt(assertions, transcript, metrics)
+        prompt = render_final_prompt(assertions, transcript, metrics, goal)
         return await _generate_verdict(
             self._client,
             model=self._model,
