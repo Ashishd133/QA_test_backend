@@ -9,6 +9,7 @@ seeded table, keyed by the same deterministic ids the script itself uses.
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from app.engine.metrics.builtins import BUILTIN_METRICS
 from app.seed import _AGENTS, _PERSONAS, _SCENARIOS, _SEEDED_RUNS, _SUITES, _id, seed
 from tests.conftest import _test_engine, requires_test_db
 
@@ -36,6 +37,10 @@ async def _cleanup(engine: AsyncEngine) -> None:
         await conn.execute(
             text("DELETE FROM personas WHERE id = ANY(:ids)"),
             {"ids": [_id(p["key"]) for p in _PERSONAS]},
+        )
+        await conn.execute(
+            text("DELETE FROM metrics WHERE id = ANY(:ids)"),
+            {"ids": [_id(f"metric:{m.key}") for m in BUILTIN_METRICS]},
         )
         await conn.execute(
             text("DELETE FROM agents WHERE id = ANY(:ids)"),
@@ -75,6 +80,12 @@ async def test_seed_is_idempotent_across_two_runs() -> None:
                     {"ids": [_id(p["key"]) for p in _PERSONAS]},
                 )
             ).scalar_one()
+            metric_count = (
+                await conn.execute(
+                    text("SELECT count(*) FROM metrics WHERE id = ANY(:ids)"),
+                    {"ids": [_id(f"metric:{m.key}") for m in BUILTIN_METRICS]},
+                )
+            ).scalar_one()
             run_rows = (
                 (
                     await conn.execute(
@@ -96,6 +107,7 @@ async def test_seed_is_idempotent_across_two_runs() -> None:
         assert suite_count == len(_SUITES)
         assert scenario_count == len(_SCENARIOS)
         assert persona_count == len(_PERSONAS)
+        assert metric_count == len(BUILTIN_METRICS)
         assert len(run_rows) == len(_SEEDED_RUNS)
         assert all(status == "completed" for status in run_rows)
         # basic_simulation.json has 4 turn events -- 4 runs * 4 turns, not 8,

@@ -1,6 +1,7 @@
 """B1-08: idempotent seed data for fresh environments (3 agents, 3 suites,
-7 scenarios, built-in personas, 4 completed FakeRunner runs) so the
-dashboard and results screens aren't empty against a brand-new database.
+7 scenarios, built-in personas, built-in metrics, 4 completed FakeRunner
+runs) so the dashboard and results screens aren't empty against a brand-new
+database.
 
 Every row uses a fixed, deterministic id (`uuid5` of a stable key) and is
 inserted with `ON CONFLICT (id) DO NOTHING`, so re-running this script never
@@ -32,6 +33,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from app.db import get_engine
 from app.engine.caller.persona_call import CARD_BLOCK_PERSONA
+from app.engine.metrics.builtins import BUILTIN_METRICS
 from app.workers.claim import ClaimedRun
 from app.workers.fake_runner import run_fake_script
 from evals.assertions import A1_REQUESTS_VERIFICATION, A2_CONFIRMS_NEXT_STEPS
@@ -251,6 +253,32 @@ async def _seed_personas(conn: AsyncConnection) -> None:
         )
 
 
+async def _seed_metrics(conn: AsyncConnection) -> None:
+    """B2.7-05: the nine built-in metrics (app.engine.metrics.builtins),
+    same dual-path convention as _seed_personas -- content rows a fresh
+    environment gets from this script, not from a schema migration."""
+    for m in BUILTIN_METRICS:
+        await conn.execute(
+            text(
+                "INSERT INTO metrics "
+                "(id, project_id, agent_id, name, description, kind, output_type, "
+                " spec, sampling_pct, status, version, created_by_user_id, builtin) "
+                "VALUES (:id, NULL, NULL, :name, :description, :kind, :output_type, "
+                " CAST(:spec AS jsonb), 100, 'active', 1, :user_id, true) "
+                "ON CONFLICT (id) DO NOTHING"
+            ),
+            {
+                "id": _id(f"metric:{m.key}"),
+                "name": m.name,
+                "description": m.docs,
+                "kind": m.kind,
+                "output_type": m.output_type,
+                "spec": json.dumps(m.spec),
+                "user_id": _SEED_USER_ID,
+            },
+        )
+
+
 async def _seed_suites(
     conn: AsyncConnection, agent_ids: dict[str, uuid.UUID]
 ) -> dict[str, uuid.UUID]:
@@ -353,6 +381,7 @@ async def seed(engine: AsyncEngine) -> None:
     async with engine.connect() as conn, conn.begin():
         agent_ids = await _seed_agents(conn)
         await _seed_personas(conn)
+        await _seed_metrics(conn)
         suite_ids = await _seed_suites(conn, agent_ids)
         scenario_ids = await _seed_scenarios(conn, suite_ids)
 
@@ -362,7 +391,9 @@ async def seed(engine: AsyncEngine) -> None:
 
 async def main() -> None:
     await seed(get_engine())
-    print("Seed complete: 3 agents, 3 suites, 7 scenarios, 3 personas, 4 completed runs.")
+    print(
+        "Seed complete: 3 agents, 3 suites, 7 scenarios, 3 personas, 9 metrics, 4 completed runs."
+    )
 
 
 if __name__ == "__main__":
