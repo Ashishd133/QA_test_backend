@@ -108,20 +108,26 @@ async def test_scenarios_source_draft_ref_unique(conn: AsyncConnection) -> None:
         {"id": suite_id, "agent_id": agent_id},
     )
 
+    persona_id = (
+        await conn.execute(text("SELECT id FROM personas WHERE builtin = true LIMIT 1"))
+    ).scalar_one()
     scenario_sql = (
         "INSERT INTO scenarios "
-        "(id, suite_id, name, persona, persona_initials, source, source_draft_ref) "
-        "VALUES (:id, :suite_id, 'Scenario', 'Persona', 'P', 'discovery_draft', :ref)"
+        "(id, suite_id, name, persona_id, source, source_draft_ref) "
+        "VALUES (:id, :suite_id, 'Scenario', :persona_id, 'discovery_draft', :ref)"
     )
     shared_ref = f"draft-{uuid.uuid4()}"
 
     await conn.execute(
-        text(scenario_sql), {"id": uuid.uuid4(), "suite_id": suite_id, "ref": shared_ref}
+        text(scenario_sql),
+        {"id": uuid.uuid4(), "suite_id": suite_id, "persona_id": persona_id, "ref": shared_ref},
     )
     # idempotent "Add to suite": a second scenario reusing the same draft ref
     # must be rejected at the DB level — the API turns this into a 200 replay.
     await _expect_integrity_error(
-        conn, scenario_sql, {"id": uuid.uuid4(), "suite_id": suite_id, "ref": shared_ref}
+        conn,
+        scenario_sql,
+        {"id": uuid.uuid4(), "suite_id": suite_id, "persona_id": persona_id, "ref": shared_ref},
     )
 
 

@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from app.engine.metrics.backtest import spec_hash
 from app.main import app
-from tests.conftest import _test_engine, auth_headers, requires_test_db
+from tests.conftest import _test_engine, auth_headers, builtin_persona_id, requires_test_db
 
 pytestmark = requires_test_db
 
@@ -97,13 +97,14 @@ async def _make_agent_and_scenario(client: AsyncClient, engine: AsyncEngine) -> 
     )
     suite_id = suite_response.json()["id"]
     scenario_id = uuid.uuid4()
+    persona_id = await builtin_persona_id(engine)
     async with engine.connect() as conn, conn.begin():
         await conn.execute(
             text(
-                "INSERT INTO scenarios (id, suite_id, name, persona, persona_initials, source) "
-                "VALUES (:id, :suite_id, 'Metrics Scenario', 'x', 'X', 'manual')"
+                "INSERT INTO scenarios (id, suite_id, name, persona_id, source) "
+                "VALUES (:id, :suite_id, 'Metrics Scenario', :persona_id, 'manual')"
             ),
-            {"id": scenario_id, "suite_id": uuid.UUID(suite_id)},
+            {"id": scenario_id, "suite_id": uuid.UUID(suite_id), "persona_id": persona_id},
         )
     return {"agent_id": agent_id, "suite_id": suite_id, "scenario_id": str(scenario_id)}
 

@@ -108,7 +108,7 @@ _CANCEL_WATCHER_SHUTDOWN_TIMEOUT_SECONDS = 5.0
 _CANCEL_POLL_INTERVAL_SECONDS = 3.0
 
 _SCENARIO_SQL = text(
-    "SELECT sc.persona, sc.script, sc.assertions, sc.goal AS scenario_goal, "
+    "SELECT p.name AS persona_name, sc.script, sc.assertions, sc.goal AS scenario_goal, "
     "       p.voice AS persona_voice, p.language AS persona_language, "
     "       p.accent AS persona_accent, p.emotion AS persona_emotion, "
     "       p.speaking_rate AS persona_speaking_rate, p.traits AS persona_traits "
@@ -201,7 +201,7 @@ async def _load_scenario(
         raise ValueError(f"scenario {scenario_id} not found")
     has_real_script = isinstance(row["script"], dict) and bool(row["script"])
     return (
-        _build_persona_spec(row["persona"], row["script"], row),
+        _build_persona_spec(row["persona_name"] or "Caller", row["script"], row),
         _load_assertion_specs(row["assertions"]),
         has_real_script,
         row["scenario_goal"],

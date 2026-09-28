@@ -28,7 +28,7 @@ from app.config import get_settings
 from app.main import app
 from app.workers.claim import claim_run
 from app.workers.fake_runner import run_fake_script
-from tests.conftest import _test_engine, auth_headers, requires_test_db
+from tests.conftest import _test_engine, auth_headers, builtin_persona_id, requires_test_db
 
 pytestmark = requires_test_db
 
@@ -69,15 +69,22 @@ async def _make_suite(
 
 async def _make_scenario(engine: AsyncEngine, suite_id: uuid.UUID, name: str) -> uuid.UUID:
     scenario_id = uuid.uuid4()
+    persona_id = await builtin_persona_id(engine)
     async with engine.connect() as conn, conn.begin():
         await conn.execute(
             text(
                 "INSERT INTO scenarios "
-                "(id, suite_id, name, persona, persona_initials, assertions, source) "
-                "VALUES (:id, :suite_id, :name, 'Priya', 'PR', CAST(:assertions AS jsonb), "
+                "(id, suite_id, name, persona_id, assertions, source) "
+                "VALUES (:id, :suite_id, :name, :persona_id, CAST(:assertions AS jsonb), "
                 "'manual')"
             ),
-            {"id": scenario_id, "suite_id": suite_id, "name": name, "assertions": json.dumps([])},
+            {
+                "id": scenario_id,
+                "suite_id": suite_id,
+                "name": name,
+                "persona_id": persona_id,
+                "assertions": json.dumps([]),
+            },
         )
     return scenario_id
 
@@ -391,9 +398,7 @@ async def test_suite_run_children_claim_and_run_at_exactly_max_concurrency() -> 
                     await asyncio.sleep(0.25)
 
         # More claimer loops than the cap on purpose (see docstring).
-        await asyncio.gather(
-            _watch_and_poll(), *(_claimer(f"fanout-worker-{i}") for i in range(6))
-        )
+        await asyncio.gather(_watch_and_poll(), *(_claimer(f"fanout-worker-{i}") for i in range(6)))
 
         async with engine.connect() as conn:
             statuses = (

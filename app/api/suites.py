@@ -1,5 +1,6 @@
 import json
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -10,17 +11,21 @@ from sqlalchemy.engine import RowMapping
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from app.config import get_settings
+from app.crypto import decrypt_json, encrypt_json
 from app.db import get_engine
 from app.deps import ensure_project_match, require_project_id, require_user_id
 from app.errors import APIError
 from app.formatting import relative_time
 from app.schemas.suites import (
     ScenarioCreateRequest,
+    ScenarioDuplicateRequest,
+    ScenarioMetricAttachment,
     ScenarioSummary,
     ScenarioUpdate,
     SuiteCreate,
     SuiteDetail,
     SuiteListItem,
+    SuiteMoveRequest,
     SuiteRunCreate,
     SuiteRunCreateResponse,
     SuiteUpdate,
@@ -70,13 +75,8 @@ def _verdict_and_score(latest: _LatestRun | None) -> tuple[Verdict, str]:
     return verdict_for_run(latest.status, latest.metrics), format_score(score)
 
 
-def _derive_initials(persona: str) -> str:
-    words = persona.split()
-    if not words:
-        return "??"
-    if len(words) == 1:
-        return words[0][:2].upper()
-    return (words[0][0] + words[1][0]).upper()
+def _dump_json(value: object) -> str:
+    return json.dumps(value)
 
 
 def _assert_count(assertions: object) -> int:
@@ -84,14 +84,15 @@ def _assert_count(assertions: object) -> int:
 
 
 def _scenario_summary(
-    row: RowMapping, latest: _LatestRun | None, assert_count: int
+    row: RowMapping | Mapping[str, Any], latest: _LatestRun | None, assert_count: int
 ) -> ScenarioSummary:
     verdict, score = _verdict_and_score(latest)
     return ScenarioSummary(
         id=str(row["id"]),
         suite_id=str(row["suite_id"]),
         name=row["name"],
-        persona=row["persona"],
+        persona=row["persona_name"] or "",
+        persona_id=str(row["persona_id"]) if row["persona_id"] else None,
         assert_count=assert_count,
         status=verdict,
         score=score,
@@ -120,27 +121,34 @@ def _suite_list_item(
         pass_rate=f"{pr}%",
         pr=pr,
         count=len(scenario_ids),
+        folder=suite_row["folder"],
+        rubric=dict(suite_row["rubric"]) if suite_row["rubric"] else None,
     )
 
 
 _SUITES_SQL = text(
-    "SELECT s.id, s.project_id, s.name, s.description, a.name AS agent_name "
+    "SELECT s.id, s.project_id, s.name, s.description, s.folder, s.rubric, "
+    "       a.name AS agent_name "
     "FROM suites s JOIN agents a ON a.id = s.agent_id "
     "WHERE s.project_id = :project_id "
     "ORDER BY s.created_at"
 )
 _SCENARIOS_FOR_PROJECT_SQL = text(
-    "SELECT sc.id, sc.suite_id, sc.name, sc.persona, sc.assertions FROM scenarios sc "
+    "SELECT sc.id, sc.suite_id, sc.name, sc.persona_id, p.name AS persona_name, sc.assertions "
+    "FROM scenarios sc "
     "JOIN suites s ON s.id = sc.suite_id "
+    "LEFT JOIN personas p ON p.id = sc.persona_id "
     "WHERE s.project_id = :project_id ORDER BY sc.suite_id, sc.created_at"
 )
 _SUITE_BY_ID_SQL = text(
-    "SELECT s.id, s.project_id, s.name, s.description, a.name AS agent_name "
+    "SELECT s.id, s.project_id, s.name, s.description, s.folder, s.rubric, "
+    "       a.name AS agent_name "
     "FROM suites s JOIN agents a ON a.id = s.agent_id WHERE s.id = :id"
 )
 _SCENARIOS_FOR_SUITE_SQL = text(
-    "SELECT id, suite_id, name, persona, assertions FROM scenarios "
-    "WHERE suite_id = :suite_id ORDER BY created_at"
+    "SELECT sc.id, sc.suite_id, sc.name, sc.persona_id, p.name AS persona_name, sc.assertions "
+    "FROM scenarios sc LEFT JOIN personas p ON p.id = sc.persona_id "
+    "WHERE sc.suite_id = :suite_id ORDER BY sc.created_at"
 )
 
 
@@ -217,9 +225,11 @@ async def create_suite(
                 await conn.execute(
                     text(
                         "INSERT INTO suites "
-                        "(id, project_id, name, description, agent_id, created_by_user_id) "
-                        "VALUES (:id, :project_id, :name, :description, :agent_id, :user_id) "
-                        "RETURNING id, project_id, name, description"
+                        "(id, project_id, name, description, agent_id, folder, rubric, "
+                        " created_by_user_id) "
+                        "VALUES (:id, :project_id, :name, :description, :agent_id, :folder, "
+                        " CAST(:rubric AS jsonb), :user_id) "
+                        "RETURNING id, project_id, name, description, folder, rubric"
                     ),
                     {
                         "id": uuid.uuid4(),
@@ -227,6 +237,8 @@ async def create_suite(
                         "name": body.name,
                         "description": body.description,
                         "agent_id": agent_id,
+                        "folder": body.folder,
+                        "rubric": json.dumps(body.rubric) if body.rubric is not None else None,
                         "user_id": user_id,
                     },
                 )
@@ -244,6 +256,8 @@ async def create_suite(
         pass_rate="0%",
         pr=0,
         count=0,
+        folder=row["folder"],
+        rubric=dict(row["rubric"]) if row["rubric"] else None,
     )
 
 
@@ -288,6 +302,10 @@ async def update_suite(
         updates["description"] = body.description
     if body.agent_id is not None:
         updates["agent_id"] = _parse_uuid(body.agent_id, "agentId")
+    if body.folder is not None:
+        updates["folder"] = body.folder
+    if body.rubric is not None:
+        updates["rubric"] = body.rubric
 
     async with engine.connect() as conn, conn.begin():
         existing = (
@@ -305,12 +323,53 @@ async def update_suite(
         if "agent_id" in updates:
             await _fetch_agent_in_project(conn, updates["agent_id"], project_id)
         if updates:
-            set_clause = ", ".join(f"{col} = :{col}" for col in updates)
+            assignments = []
+            params: dict[str, Any] = {"id": suite_id}
+            for col, val in updates.items():
+                if col == "rubric":
+                    assignments.append(f"{col} = CAST(:{col} AS jsonb)")
+                    params[col] = json.dumps(val)
+                else:
+                    assignments.append(f"{col} = :{col}")
+                    params[col] = val
             await conn.execute(
-                text(f"UPDATE suites SET {set_clause} WHERE id = :id"),
-                {**updates, "id": suite_id},
+                text(f"UPDATE suites SET {', '.join(assignments)} WHERE id = :id"), params
             )
     return await get_suite(suite_id, project_id, engine)
+
+
+@router.post("/v1/suites/move", response_model=list[str])
+async def move_suites(
+    body: SuiteMoveRequest,
+    user_id: str = Depends(require_user_id),
+    project_id: uuid.UUID = Depends(require_project_id),
+    engine: AsyncEngine = Depends(get_engine),
+) -> list[str]:
+    """B2.7-11 bulk op: reassign `folder` on many suites at once. Every
+    suite id must belong to the caller's project -- silently no-oping on a
+    foreign suite id would look like success from the UI's side while
+    actually moving nothing."""
+    suite_ids = [_parse_uuid(sid, "suiteIds") for sid in body.suite_ids]
+    if not suite_ids:
+        return []
+    async with engine.connect() as conn, conn.begin():
+        owned = (
+            (
+                await conn.execute(
+                    text("SELECT id FROM suites WHERE id = ANY(:ids) AND project_id = :project_id"),
+                    {"ids": suite_ids, "project_id": project_id},
+                )
+            )
+            .scalars()
+            .all()
+        )
+        if len(owned) != len(suite_ids):
+            raise APIError("not_found", "one or more suites not found", status.HTTP_404_NOT_FOUND)
+        await conn.execute(
+            text("UPDATE suites SET folder = :folder WHERE id = ANY(:ids)"),
+            {"folder": body.folder, "ids": suite_ids},
+        )
+    return [str(sid) for sid in suite_ids]
 
 
 @router.delete("/v1/suites/{suite_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -535,6 +594,100 @@ async def run_suite(
     return SuiteRunCreateResponse(parent_run_id=str(parent_id), call_count=len(scenario_ids))
 
 
+async def _resolve_persona(
+    conn: AsyncConnection,
+    project_id: uuid.UUID,
+    persona_id: str | None,
+    suggested_name: str | None,
+) -> tuple[uuid.UUID, str]:
+    """Every scenario needs a real `personas` row now (B2.7-11). An explicit
+    `personaId` is validated for visibility (builtin, or this project's
+    own); with none given (the from-draft path, where the draft only ever
+    carried a free-text suggestion), fall back to an exact case-insensitive
+    name match, scoped the same way, and 422 rather than silently picking
+    an unrelated project's same-named persona."""
+    if persona_id is not None:
+        pid = _parse_uuid(persona_id, "personaId")
+        row = (
+            (
+                await conn.execute(
+                    text(
+                        "SELECT id, name FROM personas "
+                        "WHERE id = :id AND (project_id IS NULL OR project_id = :project_id)"
+                    ),
+                    {"id": pid, "project_id": project_id},
+                )
+            )
+            .mappings()
+            .first()
+        )
+        if row is None:
+            raise APIError("not_found", "persona not found", status.HTTP_404_NOT_FOUND)
+        return uuid.UUID(str(row["id"])), row["name"]
+
+    row = (
+        (
+            await conn.execute(
+                text(
+                    "SELECT id, name FROM personas WHERE lower(name) = lower(:name) "
+                    "AND (project_id IS NULL OR project_id = :project_id) LIMIT 1"
+                ),
+                {"name": suggested_name, "project_id": project_id},
+            )
+        )
+        .mappings()
+        .first()
+    )
+    if row is None:
+        raise APIError(
+            "persona_not_found",
+            f"no persona named {suggested_name!r} found in this project or the built-ins -- "
+            "pass personaId explicitly",
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+        )
+    return uuid.UUID(str(row["id"])), row["name"]
+
+
+async def _sync_scenario_metrics(
+    conn: AsyncConnection,
+    scenario_id: uuid.UUID,
+    project_id: uuid.UUID,
+    metrics: list[ScenarioMetricAttachment],
+) -> None:
+    """Replaces the full attachment set -- an empty list clears it, same
+    "omitted vs. provided" convention as ScenarioUpdate.metrics itself.
+    Each metric_id is checked for project visibility first so this can
+    never leave a scenario_metrics row pointing at another project's
+    metric (each metric row is validated individually, not batched,
+    since a single bad id shouldn't silently drop the rest)."""
+    for m in metrics:
+        mid = _parse_uuid(m.metric_id, "metrics[].metricId")
+        exists = (
+            await conn.execute(
+                text(
+                    "SELECT 1 FROM metrics "
+                    "WHERE id = :id AND (project_id IS NULL OR project_id = :project_id)"
+                ),
+                {"id": mid, "project_id": project_id},
+            )
+        ).first()
+        if exists is None:
+            raise APIError(
+                "not_found", f"metric {m.metric_id} not found", status.HTTP_404_NOT_FOUND
+            )
+    await conn.execute(
+        text("DELETE FROM scenario_metrics WHERE scenario_id = :id"), {"id": scenario_id}
+    )
+    for m in metrics:
+        await conn.execute(
+            text(
+                "INSERT INTO scenario_metrics (scenario_id, metric_id, gating) "
+                "VALUES (:sid, :mid, :gating)"
+            ),
+            {"sid": scenario_id, "mid": uuid.UUID(m.metric_id), "gating": m.gating},
+        )
+
+
 @router.post(
     "/v1/suites/{suite_id}/scenarios",
     response_model=ScenarioSummary,
@@ -567,8 +720,10 @@ async def add_scenario(
                 (
                     await conn.execute(
                         text(
-                            "SELECT id, suite_id, name, persona, assertions FROM scenarios "
-                            "WHERE source_draft_ref = :ref"
+                            "SELECT sc.id, sc.suite_id, sc.name, sc.persona_id, "
+                            "       p.name AS persona_name, sc.assertions "
+                            "FROM scenarios sc LEFT JOIN personas p ON p.id = sc.persona_id "
+                            "WHERE sc.source_draft_ref = :ref"
                         ),
                         {"ref": body.from_draft_id},
                     )
@@ -599,36 +754,50 @@ async def add_scenario(
             )
             if draft is None:
                 raise APIError("not_found", "draft not found", status.HTTP_404_NOT_FOUND)
-            name, persona, assertions = draft["name"], draft["persona"], draft["assertions"]
+            name, assertions = draft["name"], draft["assertions"]
             source, source_draft_ref = "discovery_draft", body.from_draft_id
             script = None
+            persona_id, persona_name = await _resolve_persona(
+                conn, project_id, body.persona_id, draft["persona"]
+            )
         else:
             assert body.name is not None
-            assert body.persona is not None
-            name, persona, assertions = body.name, body.persona, body.assertions
+            assert body.persona_id is not None
+            name, assertions = body.name, body.assertions
             source, source_draft_ref = "manual", None
             script = body.script
+            persona_id, persona_name = await _resolve_persona(
+                conn, project_id, body.persona_id, None
+            )
 
-        persona_initials = body.persona_initials or _derive_initials(persona)
         row = (
             (
                 await conn.execute(
                     text(
                         "INSERT INTO scenarios "
-                        "(id, suite_id, name, persona, persona_initials, script, assertions, "
-                        " source, source_draft_ref) "
-                        "VALUES (:id, :suite_id, :name, :persona, :persona_initials, :script, "
-                        " CAST(:assertions AS jsonb), :source, :source_draft_ref) "
-                        "RETURNING id, suite_id, name, persona, assertions"
+                        "(id, suite_id, name, persona_id, script, assertions, goal, "
+                        " test_profile_id, conditions, source, source_draft_ref) "
+                        "VALUES (:id, :suite_id, :name, :persona_id, :script, "
+                        " CAST(:assertions AS jsonb), :goal, :test_profile_id, "
+                        " CAST(:conditions AS jsonb), :source, :source_draft_ref) "
+                        "RETURNING id, suite_id, name, assertions"
                     ),
                     {
                         "id": uuid.uuid4(),
                         "suite_id": suite_id,
                         "name": name,
-                        "persona": persona,
-                        "persona_initials": persona_initials,
+                        "persona_id": persona_id,
                         "script": script,
                         "assertions": json.dumps(assertions),
+                        "goal": body.goal,
+                        "test_profile_id": (
+                            _parse_uuid(body.test_profile_id, "testProfileId")
+                            if body.test_profile_id
+                            else None
+                        ),
+                        "conditions": (
+                            json.dumps(body.conditions) if body.conditions is not None else None
+                        ),
                         "source": source,
                         "source_draft_ref": source_draft_ref,
                     },
@@ -637,7 +806,10 @@ async def add_scenario(
             .mappings()
             .one()
         )
-    return _scenario_summary(row, None, _assert_count(row["assertions"]))
+        if body.metrics:
+            await _sync_scenario_metrics(conn, uuid.UUID(str(row["id"])), project_id, body.metrics)
+    result_row = {**row, "persona_id": persona_id, "persona_name": persona_name}
+    return _scenario_summary(result_row, None, _assert_count(row["assertions"]))
 
 
 async def _fetch_scenario_project_or_404(
@@ -675,21 +847,30 @@ async def update_scenario(
     updates: dict[str, Any] = {}
     if body.name is not None:
         updates["name"] = body.name
-    if body.persona is not None:
-        updates["persona"] = body.persona
     if body.script is not None:
         updates["script"] = body.script
     if body.assertions is not None:
         updates["assertions"] = json.dumps(body.assertions)
+    if body.goal is not None:
+        updates["goal"] = body.goal
+    if body.test_profile_id is not None:
+        updates["test_profile_id"] = _parse_uuid(body.test_profile_id, "testProfileId")
+    if body.conditions is not None:
+        updates["conditions"] = json.dumps(body.conditions)
 
     async with engine.connect() as conn, conn.begin():
         scenario_project_id = await _fetch_scenario_project_or_404(conn, scenario_id)
         ensure_project_match(scenario_project_id, project_id)
+        if body.persona_id is not None:
+            persona_id, _persona_name = await _resolve_persona(
+                conn, project_id, body.persona_id, None
+            )
+            updates["persona_id"] = persona_id
         if updates:
             assignments = []
             params: dict[str, Any] = {"id": scenario_id}
             for col, val in updates.items():
-                if col == "assertions":
+                if col in ("assertions", "conditions"):
                     assignments.append(f"{col} = CAST(:{col} AS jsonb)")
                 else:
                     assignments.append(f"{col} = :{col}")
@@ -697,12 +878,16 @@ async def update_scenario(
             await conn.execute(
                 text(f"UPDATE scenarios SET {', '.join(assignments)} WHERE id = :id"), params
             )
+        if body.metrics is not None:
+            await _sync_scenario_metrics(conn, scenario_id, project_id, body.metrics)
         row = (
             (
                 await conn.execute(
                     text(
-                        "SELECT id, suite_id, name, persona, assertions "
-                        "FROM scenarios WHERE id = :id"
+                        "SELECT sc.id, sc.suite_id, sc.name, sc.persona_id, "
+                        "       p.name AS persona_name, sc.assertions "
+                        "FROM scenarios sc LEFT JOIN personas p ON p.id = sc.persona_id "
+                        "WHERE sc.id = :id"
                     ),
                     {"id": scenario_id},
                 )
@@ -732,3 +917,256 @@ async def delete_scenario(
         )
         if result.rowcount == 0:
             raise APIError("not_found", "scenario not found", status.HTTP_404_NOT_FOUND)
+
+
+async def _copy_persona_for_project(
+    conn: AsyncConnection, persona_id: uuid.UUID, target_project_id: uuid.UUID
+) -> uuid.UUID:
+    """A builtin persona (project_id IS NULL) is already visible from any
+    project -- reused as-is, same as a same-project duplicate. Only a
+    project-owned persona needs an actual copy, mirroring
+    POST /v1/personas/{id}/duplicate's own INSERT shape."""
+    row = (
+        (
+            await conn.execute(
+                text(
+                    "SELECT project_id, name, voice, language, accent, traits, emotion, "
+                    "speaking_rate, interruption_behavior, environment, code_switch "
+                    "FROM personas WHERE id = :id"
+                ),
+                {"id": persona_id},
+            )
+        )
+        .mappings()
+        .one()
+    )
+    if row["project_id"] is None or uuid.UUID(str(row["project_id"])) == target_project_id:
+        return persona_id
+    new_id = uuid.uuid4()
+    await conn.execute(
+        text(
+            "INSERT INTO personas "
+            "(id, project_id, name, voice, language, accent, traits, builtin, emotion, "
+            " speaking_rate, interruption_behavior, environment, code_switch) "
+            "VALUES (:id, :project_id, :name, :voice, :language, :accent, "
+            " CAST(:traits AS jsonb), false, :emotion, :speaking_rate, "
+            " :interruption_behavior, :environment, CAST(:code_switch AS jsonb))"
+        ),
+        {
+            "id": new_id,
+            "project_id": target_project_id,
+            "name": row["name"],
+            "voice": row["voice"],
+            "language": row["language"],
+            "accent": row["accent"],
+            "traits": _dump_json(row["traits"]),
+            "emotion": row["emotion"],
+            "speaking_rate": row["speaking_rate"],
+            "interruption_behavior": row["interruption_behavior"],
+            "environment": row["environment"],
+            "code_switch": _dump_json(row["code_switch"]) if row["code_switch"] else None,
+        },
+    )
+    return new_id
+
+
+async def _copy_test_profile_for_project(
+    conn: AsyncConnection, user_id: str, profile_id: uuid.UUID, target_project_id: uuid.UUID
+) -> uuid.UUID:
+    """Test profiles are always project-scoped (no builtin concept), so a
+    cross-project duplicate always needs a real copy -- decrypting the
+    source (access-logged, same as a direct GET) and re-encrypting into a
+    fresh row rather than copying ciphertext directly, since app.crypto's
+    envelope isn't guaranteed portable across an unrelated write path."""
+    row = (
+        (
+            await conn.execute(
+                text("SELECT project_id, name, fields FROM test_profiles WHERE id = :id"),
+                {"id": profile_id},
+            )
+        )
+        .mappings()
+        .one()
+    )
+    if uuid.UUID(str(row["project_id"])) == target_project_id:
+        return profile_id
+    decrypted = decrypt_json(row["fields"])
+    await conn.execute(
+        text(
+            "INSERT INTO sensitive_access_log (id, resource_type, resource_id, user_id, action) "
+            "VALUES (:id, 'test_profile', :resource_id, :user_id, 'read')"
+        ),
+        {"id": uuid.uuid4(), "resource_id": profile_id, "user_id": user_id},
+    )
+    new_id = uuid.uuid4()
+    envelope = encrypt_json(decrypted)
+    await conn.execute(
+        text(
+            "INSERT INTO test_profiles (id, project_id, name, fields, encrypted, "
+            " created_by_user_id) "
+            "VALUES (:id, :project_id, :name, CAST(:fields AS jsonb), true, :user_id)"
+        ),
+        {
+            "id": new_id,
+            "project_id": target_project_id,
+            "name": row["name"],
+            "fields": _dump_json(envelope),
+            "user_id": user_id,
+        },
+    )
+    return new_id
+
+
+@router.post(
+    "/v1/scenarios/{scenario_id}/duplicate",
+    response_model=ScenarioSummary,
+    status_code=status.HTTP_201_CREATED,
+)
+async def duplicate_scenario(
+    scenario_id: uuid.UUID,
+    body: ScenarioDuplicateRequest,
+    user_id: str = Depends(require_user_id),
+    project_id: uuid.UUID = Depends(require_project_id),
+    engine: AsyncEngine = Depends(get_engine),
+) -> ScenarioSummary:
+    """B2.7-11 bulk op. The target suite may belong to any project (this
+    codebase has no per-user project-membership ACL anywhere else either --
+    X-Project-Id is the only scoping this system has, and it only ever
+    gates the *source* side of an action); a cross-project duplicate copies
+    a project-owned persona/test-profile by value into the target project
+    rather than leaving a reference that would dangle once the source
+    project can no longer be assumed reachable. A scenario_metrics
+    attachment whose metric isn't visible in the target project is dropped
+    (not copied as a dangling reference) rather than erroring the whole
+    duplicate."""
+    target_suite_id = _parse_uuid(body.target_suite_id, "targetSuiteId")
+    async with engine.connect() as conn, conn.begin():
+        source_project_id = await _fetch_scenario_project_or_404(conn, scenario_id)
+        ensure_project_match(source_project_id, project_id)
+        source = (
+            (
+                await conn.execute(
+                    text(
+                        "SELECT name, persona_id, script, assertions, goal, test_profile_id, "
+                        "conditions FROM scenarios WHERE id = :id"
+                    ),
+                    {"id": scenario_id},
+                )
+            )
+            .mappings()
+            .one()
+        )
+
+        target_suite = (
+            (
+                await conn.execute(
+                    text("SELECT project_id FROM suites WHERE id = :id"), {"id": target_suite_id}
+                )
+            )
+            .mappings()
+            .first()
+        )
+        if target_suite is None:
+            raise APIError("not_found", "target suite not found", status.HTTP_404_NOT_FOUND)
+        target_project_id = uuid.UUID(str(target_suite["project_id"]))
+        if (
+            body.target_project_id is not None
+            and _parse_uuid(body.target_project_id, "targetProjectId") != target_project_id
+        ):
+            raise APIError(
+                "validation_error",
+                "targetProjectId does not match targetSuiteId's own project",
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+            )
+
+        new_persona_id = await _copy_persona_for_project(
+            conn, uuid.UUID(str(source["persona_id"])), target_project_id
+        )
+        new_test_profile_id = (
+            await _copy_test_profile_for_project(
+                conn, user_id, uuid.UUID(str(source["test_profile_id"])), target_project_id
+            )
+            if source["test_profile_id"] is not None
+            else None
+        )
+
+        new_id = uuid.uuid4()
+        row = (
+            (
+                await conn.execute(
+                    text(
+                        "INSERT INTO scenarios "
+                        "(id, suite_id, name, persona_id, script, assertions, goal, "
+                        " test_profile_id, conditions, source) "
+                        "VALUES (:id, :suite_id, :name, :persona_id, CAST(:script AS jsonb), "
+                        " CAST(:assertions AS jsonb), :goal, :test_profile_id, "
+                        " CAST(:conditions AS jsonb), 'manual') "
+                        "RETURNING id, suite_id, name, assertions"
+                    ),
+                    {
+                        "id": new_id,
+                        "suite_id": target_suite_id,
+                        "name": f"{source['name']} (copy)",
+                        "persona_id": new_persona_id,
+                        "script": _dump_json(source["script"]) if source["script"] else None,
+                        "assertions": _dump_json(source["assertions"]),
+                        "goal": source["goal"],
+                        "test_profile_id": new_test_profile_id,
+                        "conditions": (
+                            _dump_json(source["conditions"]) if source["conditions"] else None
+                        ),
+                    },
+                )
+            )
+            .mappings()
+            .one()
+        )
+
+        source_metrics = (
+            (
+                await conn.execute(
+                    text(
+                        "SELECT sm.metric_id, sm.gating FROM scenario_metrics sm "
+                        "JOIN metrics m ON m.id = sm.metric_id "
+                        "WHERE sm.scenario_id = :id "
+                        # Drop, don't dangle: only copy an attachment whose metric is
+                        # actually visible (builtin or same-project) in the target.
+                        "AND (m.project_id IS NULL OR m.project_id = :target_project_id)"
+                    ),
+                    {"id": scenario_id, "target_project_id": target_project_id},
+                )
+            )
+            .mappings()
+            .all()
+        )
+        if source_metrics:
+            await conn.execute(
+                text(
+                    "INSERT INTO scenario_metrics (scenario_id, metric_id, gating) "
+                    "SELECT :new_id, m.metric_id, m.gating "
+                    "FROM (VALUES "
+                    + ", ".join(
+                        f"(CAST(:mid{i} AS uuid), CAST(:gating{i} AS boolean))"
+                        for i in range(len(source_metrics))
+                    )
+                    + ") AS m(metric_id, gating)"
+                ),
+                {
+                    "new_id": new_id,
+                    **{f"mid{i}": m["metric_id"] for i, m in enumerate(source_metrics)},
+                    **{f"gating{i}": m["gating"] for i, m in enumerate(source_metrics)},
+                },
+            )
+
+        persona_row = (
+            (
+                await conn.execute(
+                    text("SELECT name FROM personas WHERE id = :id"), {"id": new_persona_id}
+                )
+            )
+            .mappings()
+            .one()
+        )
+
+    result_row = {**row, "persona_id": new_persona_id, "persona_name": persona_row["name"]}
+    return _scenario_summary(result_row, None, _assert_count(row["assertions"]))

@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from app.config import get_settings
 from app.main import app
-from tests.conftest import _test_engine, auth_headers, requires_test_db
+from tests.conftest import _test_engine, auth_headers, builtin_persona_id, requires_test_db
 
 pytestmark = requires_test_db
 
@@ -59,18 +59,20 @@ async def _make_scenario(
     engine: AsyncEngine, suite_id: uuid.UUID, name: str = "Test Scenario"
 ) -> uuid.UUID:
     scenario_id = uuid.uuid4()
+    persona_id = await builtin_persona_id(engine)
     async with engine.connect() as conn, conn.begin():
         await conn.execute(
             text(
                 "INSERT INTO scenarios "
-                "(id, suite_id, name, persona, persona_initials, assertions, source) "
-                "VALUES (:id, :suite_id, :name, 'Priya', 'PR', CAST(:assertions AS jsonb), "
+                "(id, suite_id, name, persona_id, assertions, source) "
+                "VALUES (:id, :suite_id, :name, :persona_id, CAST(:assertions AS jsonb), "
                 "'manual')"
             ),
             {
                 "id": scenario_id,
                 "suite_id": suite_id,
                 "name": name,
+                "persona_id": persona_id,
                 "assertions": json.dumps([{"id": "a1"}, {"id": "a2"}]),
             },
         )
@@ -308,11 +310,12 @@ async def test_add_scenario_manual_success() -> None:
     engine = _test_engine()
     agent_id = await _make_agent(engine, "Manual Success Agent")
     suite_id = await _make_suite(engine, agent_id, "Manual Success Suite")
+    persona_id = await builtin_persona_id(engine)
     try:
         async with await _client() as client:
             response = await client.post(
                 f"/v1/suites/{suite_id}/scenarios",
-                json={"name": "New Scenario", "persona": "Aggressive Caller"},
+                json={"name": "New Scenario", "personaId": str(persona_id)},
             )
         assert response.status_code == 201
         body = response.json()
@@ -351,10 +354,17 @@ async def test_add_scenario_from_draft_is_idempotent() -> None:
             {"run_id": run_id, "draft_id": draft_id},
         )
 
+    persona_id = await builtin_persona_id(engine)
     try:
         async with await _client() as client:
+            # The draft's own `persona` field ("Skeptical Caller") is a
+            # free-text suggestion, not a real persona -- overriding it with
+            # personaId here (rather than requiring a persona named exactly
+            # that to exist) is exactly what ScenarioCreateRequest.personaId
+            # is for on the from-draft path.
             first = await client.post(
-                f"/v1/suites/{suite_id}/scenarios", json={"fromDraftId": draft_id}
+                f"/v1/suites/{suite_id}/scenarios",
+                json={"fromDraftId": draft_id, "personaId": str(persona_id)},
             )
             assert first.status_code == 201
             first_body = first.json()
@@ -386,7 +396,7 @@ async def test_add_scenario_suite_not_found() -> None:
     async with await _client() as client:
         response = await client.post(
             f"/v1/suites/{uuid.uuid4()}/scenarios",
-            json={"name": "X", "persona": "Y"},
+            json={"name": "X", "personaId": str(uuid.uuid4())},
         )
     assert response.status_code == 404
 

@@ -102,6 +102,19 @@ _PERSONAS: list[dict[str, Any]] = [
         "accent": "British English",
         "traits": {"tone": "confused", "patience": "high"},
     },
+    {
+        # B2.7-11: same row migration 015's data step inserts directly
+        # (matching deterministic id) -- kept here too so a fresh
+        # environment seeded from scratch (no migration history) still
+        # gets it, and so ON CONFLICT DO NOTHING makes the two coincide
+        # rather than duplicate on an environment that ran both.
+        "key": "persona:asha",
+        "name": CARD_BLOCK_PERSONA.name,
+        "voice": "en-US-Chirp3-HD-Charon",
+        "language": "en-US",
+        "accent": None,
+        "traits": CARD_BLOCK_PERSONA.traits,
+    },
 ]
 
 _SUITES: list[dict[str, Any]] = [
@@ -130,50 +143,43 @@ _SCENARIOS: list[dict[str, Any]] = [
         "key": "scenario:support:card-block",
         "suite_key": "suite:support",
         "name": "Lost card, request block",
-        "persona": "Priya Sharma",
-        "persona_initials": "PS",
+        "persona_key": "persona:priya",
     },
     {
         "key": "scenario:support:balance",
         "suite_key": "suite:support",
         "name": "Balance inquiry",
-        "persona": "Frustrated Frank",
-        "persona_initials": "FF",
+        "persona_key": "persona:frank",
     },
     {
         "key": "scenario:support:account-update",
         "suite_key": "suite:support",
         "name": "Update contact details",
-        "persona": "Elderly Elena",
-        "persona_initials": "EE",
+        "persona_key": "persona:elena",
     },
     {
         "key": "scenario:billing:dispute",
         "suite_key": "suite:billing",
         "name": "Dispute a charge",
-        "persona": "Priya Sharma",
-        "persona_initials": "PS",
+        "persona_key": "persona:priya",
     },
     {
         "key": "scenario:billing:payment-plan",
         "suite_key": "suite:billing",
         "name": "Set up a payment plan",
-        "persona": "Frustrated Frank",
-        "persona_initials": "FF",
+        "persona_key": "persona:frank",
     },
     {
         "key": "scenario:billing:refund",
         "suite_key": "suite:billing",
         "name": "Request a refund",
-        "persona": "Elderly Elena",
-        "persona_initials": "EE",
+        "persona_key": "persona:elena",
     },
     {
         "key": "scenario:reference:card-block",
         "suite_key": "suite:reference",
         "name": "Lost card, request block (reference agent)",
-        "persona": CARD_BLOCK_PERSONA.name,
-        "persona_initials": "AR",
+        "persona_key": "persona:asha",
         # B2-08: script is the executor's PersonaSpec input (everything
         # PersonaSpec needs besides `name`, which comes from `persona`
         # above) -- goal/openingLine/traits, reusing CARD_BLOCK_PERSONA
@@ -317,8 +323,8 @@ async def _seed_scenarios(
         await conn.execute(
             text(
                 "INSERT INTO scenarios "
-                "(id, suite_id, name, persona, persona_initials, script, assertions, source) "
-                "VALUES (:id, :suite_id, :name, :persona, :persona_initials, "
+                "(id, suite_id, name, persona_id, script, assertions, source) "
+                "VALUES (:id, :suite_id, :name, :persona_id, "
                 " CAST(:script AS jsonb), CAST(:assertions AS jsonb), 'manual') "
                 "ON CONFLICT (id) DO NOTHING"
             ),
@@ -326,8 +332,7 @@ async def _seed_scenarios(
                 "id": scenario_id,
                 "suite_id": suite_ids[sc["suite_key"]],
                 "name": sc["name"],
-                "persona": sc["persona"],
-                "persona_initials": sc["persona_initials"],
+                "persona_id": _id(sc["persona_key"]),
                 "script": json.dumps(script) if script is not None else None,
                 "assertions": json.dumps(sc.get("assertions", _SEED_ASSERTIONS)),
             },

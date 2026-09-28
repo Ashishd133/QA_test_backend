@@ -2378,12 +2378,24 @@
         "type": "object"
       },
       "ScenarioCreateRequest": {
-        "description": "Manual creation requires name+persona; `fromDraftId` short-circuits\nthat (B1-01: idempotent via scenarios.source_draft_ref UNIQUE).",
+        "description": "Manual creation requires name+personaId; `fromDraftId` short-circuits\nthat (B1-01: idempotent via scenarios.source_draft_ref UNIQUE). A\nfrom-draft creation may still pass `personaId` to override the draft's\nown (free-text, unresolved) persona suggestion; when omitted, the\nserver tries an exact case-insensitive name match against personas\nvisible to the project and 422s (`persona_not_found`) if none matches.",
         "properties": {
           "assertions": {
             "items": {},
             "title": "Assertions",
             "type": "array"
+          },
+          "conditions": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Conditions"
           },
           "fromDraftId": {
             "anyOf": [
@@ -2396,6 +2408,24 @@
             ],
             "title": "Fromdraftid"
           },
+          "goal": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Goal"
+          },
+          "metrics": {
+            "items": {
+              "$ref": "#/components/schemas/ScenarioMetricAttachment"
+            },
+            "title": "Metrics",
+            "type": "array"
+          },
           "name": {
             "anyOf": [
               {
@@ -2407,7 +2437,7 @@
             ],
             "title": "Name"
           },
-          "persona": {
+          "personaId": {
             "anyOf": [
               {
                 "type": "string"
@@ -2416,18 +2446,7 @@
                 "type": "null"
               }
             ],
-            "title": "Persona"
-          },
-          "personaInitials": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Personainitials"
+            "title": "Personaid"
           },
           "script": {
             "anyOf": [
@@ -2440,9 +2459,64 @@
               }
             ],
             "title": "Script"
+          },
+          "testProfileId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Testprofileid"
           }
         },
         "title": "ScenarioCreateRequest",
+        "type": "object"
+      },
+      "ScenarioDuplicateRequest": {
+        "description": "B2.7-11 bulk op: copy a scenario into another suite, optionally in\nanother project. `targetProjectId` omitted/equal to the caller's own\nproject means a same-project duplicate (persona/testProfile refs reused\nas-is); a genuinely cross-project duplicate copies any project-scoped\n(non-builtin) persona/test-profile by value into the target project\nrather than leaving a dangling cross-project reference.",
+        "properties": {
+          "targetProjectId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Targetprojectid"
+          },
+          "targetSuiteId": {
+            "title": "Targetsuiteid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "targetSuiteId"
+        ],
+        "title": "ScenarioDuplicateRequest",
+        "type": "object"
+      },
+      "ScenarioMetricAttachment": {
+        "description": "B2.7-11: which metrics a scenario attaches, and whether each gates\nthe call's verdict (B2.7-08 reads exactly this via `scenario_metrics`).\nAttaching a metric here does NOT change which metrics get *scored* for\nthe call -- that's resolve_metrics_for_agent's job (agent > project >\nbuiltin), unaffected by this table. This is purely the gating flag.",
+        "properties": {
+          "gating": {
+            "default": false,
+            "title": "Gating",
+            "type": "boolean"
+          },
+          "metricId": {
+            "title": "Metricid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "metricId"
+        ],
+        "title": "ScenarioMetricAttachment",
         "type": "object"
       },
       "ScenarioSummary": {
@@ -2462,6 +2536,17 @@
           "persona": {
             "title": "Persona",
             "type": "string"
+          },
+          "personaId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Personaid"
           },
           "runId": {
             "title": "Runid",
@@ -2513,6 +2598,43 @@
             ],
             "title": "Assertions"
           },
+          "conditions": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Conditions"
+          },
+          "goal": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Goal"
+          },
+          "metrics": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ScenarioMetricAttachment"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metrics"
+          },
           "name": {
             "anyOf": [
               {
@@ -2524,7 +2646,7 @@
             ],
             "title": "Name"
           },
-          "persona": {
+          "personaId": {
             "anyOf": [
               {
                 "type": "string"
@@ -2533,7 +2655,7 @@
                 "type": "null"
               }
             ],
-            "title": "Persona"
+            "title": "Personaid"
           },
           "script": {
             "anyOf": [
@@ -2546,6 +2668,17 @@
               }
             ],
             "title": "Script"
+          },
+          "testProfileId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Testprofileid"
           }
         },
         "title": "ScenarioUpdate",
@@ -2643,9 +2776,32 @@
             ],
             "title": "Description"
           },
+          "folder": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Folder"
+          },
           "name": {
             "title": "Name",
             "type": "string"
+          },
+          "rubric": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rubric"
           }
         },
         "required": [
@@ -2668,6 +2824,17 @@
           "desc": {
             "title": "Desc",
             "type": "string"
+          },
+          "folder": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Folder"
           },
           "id": {
             "title": "Id",
@@ -2692,6 +2859,18 @@
           "projectId": {
             "title": "Projectid",
             "type": "string"
+          },
+          "rubric": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rubric"
           },
           "scenarios": {
             "items": {
@@ -2730,6 +2909,17 @@
             "title": "Desc",
             "type": "string"
           },
+          "folder": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Folder"
+          },
           "id": {
             "title": "Id",
             "type": "string"
@@ -2753,6 +2943,18 @@
           "projectId": {
             "title": "Projectid",
             "type": "string"
+          },
+          "rubric": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rubric"
           }
         },
         "required": [
@@ -2767,6 +2969,34 @@
           "count"
         ],
         "title": "SuiteListItem",
+        "type": "object"
+      },
+      "SuiteMoveRequest": {
+        "description": "Bulk move (B2.7-11): reassign `folder` on many suites in one call.\n`folder: None` moves them back to the top level, same meaning as the\ncolumn's own NULL -- not the empty string.",
+        "properties": {
+          "folder": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Folder"
+          },
+          "suiteIds": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Suiteids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "suiteIds"
+        ],
+        "title": "SuiteMoveRequest",
         "type": "object"
       },
       "SuiteRunCreate": {
@@ -2867,6 +3097,17 @@
             ],
             "title": "Description"
           },
+          "folder": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Folder"
+          },
           "name": {
             "anyOf": [
               {
@@ -2877,6 +3118,18 @@
               }
             ],
             "title": "Name"
+          },
+          "rubric": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rubric"
           }
         },
         "title": "SuiteUpdate",
@@ -4858,6 +5111,60 @@
         ]
       }
     },
+    "/v1/scenarios/{scenario_id}/duplicate": {
+      "post": {
+        "description": "B2.7-11 bulk op. The target suite may belong to any project (this\ncodebase has no per-user project-membership ACL anywhere else either --\nX-Project-Id is the only scoping this system has, and it only ever\ngates the *source* side of an action); a cross-project duplicate copies\na project-owned persona/test-profile by value into the target project\nrather than leaving a reference that would dangle once the source\nproject can no longer be assumed reachable. A scenario_metrics\nattachment whose metric isn't visible in the target project is dropped\n(not copied as a dangling reference) rather than erroring the whole\nduplicate.",
+        "operationId": "duplicate_scenario",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "scenario_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Scenario Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScenarioDuplicateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScenarioSummary"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Duplicate Scenario",
+        "tags": [
+          "suites"
+        ]
+      }
+    },
     "/v1/simulations/runs": {
       "post": {
         "operationId": "create_simulation_run",
@@ -4976,6 +5283,52 @@
           }
         },
         "summary": "Create Suite",
+        "tags": [
+          "suites"
+        ]
+      }
+    },
+    "/v1/suites/move": {
+      "post": {
+        "description": "B2.7-11 bulk op: reassign `folder` on many suites at once. Every\nsuite id must belong to the caller's project -- silently no-oping on a\nforeign suite id would look like success from the UI's side while\nactually moving nothing.",
+        "operationId": "move_suites",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SuiteMoveRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "title": "Response Move Suites",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Move Suites",
         "tags": [
           "suites"
         ]

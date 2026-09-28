@@ -33,7 +33,6 @@ _HEADERS = auth_headers()
 
 _STATUSES = ("queued", "running", "completed", "completed", "completed", "cancelled", "failed")
 _BADGES = ("pass", "pass", "warn", "fail")
-_PERSONAS = ("Priya", "Alex", "Sam")
 
 
 async def _client() -> AsyncClient:
@@ -55,24 +54,33 @@ async def _make_agent(engine: AsyncEngine, name: str) -> uuid.UUID:
 
 async def _make_suite_and_scenarios(
     engine: AsyncEngine, agent_id: uuid.UUID, n: int
-) -> list[tuple[uuid.UUID, str]]:
-    """Returns (scenario_id, persona) pairs -- the caller already knows
+) -> list[tuple[uuid.UUID, uuid.UUID]]:
+    """Returns (scenario_id, persona_id) pairs -- the caller already knows
     each scenario's persona from this, so seeding a batch never needs a
     per-child SELECT back against `scenarios` (see this module's docstring
     on why every DB round trip here is budgeted: `null_pool=True` pays a
     fresh connection-establishment cost on every single `.connect()`,
-    independent of query count, against this environment's slow test DB)."""
+    independent of query count, against this environment's slow test DB).
+    `persona_id` (not a name) is what distinct_persona_count actually needs
+    to be distinct over -- a distinct-ids count and a distinct-names count
+    agree exactly, since each id maps to exactly one name."""
     suite_id = uuid.uuid4()
     scenario_ids = [uuid.uuid4() for _ in range(n)]
-    personas = [random.choice(_PERSONAS) for _ in range(n)]
-    values_sql = ", ".join(
-        f"(:id{i}, :suite_id, 'Scenario', :persona{i}, 'PR', 'manual')" for i in range(n)
-    )
-    params: dict[str, Any] = {"suite_id": suite_id}
-    for i, (sid, persona) in enumerate(zip(scenario_ids, personas, strict=True)):
-        params[f"id{i}"] = sid
-        params[f"persona{i}"] = persona
     async with engine.connect() as conn, conn.begin():
+        seeded_persona_ids = (
+            (await conn.execute(text("SELECT id FROM personas WHERE builtin = true")))
+            .scalars()
+            .all()
+        )
+        assert seeded_persona_ids, "no builtin personas seeded"
+        personas = [random.choice(seeded_persona_ids) for _ in range(n)]
+        values_sql = ", ".join(
+            f"(:id{i}, :suite_id, 'Scenario', :persona{i}, 'manual')" for i in range(n)
+        )
+        params: dict[str, Any] = {"suite_id": suite_id}
+        for i, (sid, persona) in enumerate(zip(scenario_ids, personas, strict=True)):
+            params[f"id{i}"] = sid
+            params[f"persona{i}"] = persona
         await conn.execute(
             text(
                 "INSERT INTO suites (id, name, agent_id, created_by_user_id) "
@@ -83,7 +91,7 @@ async def _make_suite_and_scenarios(
         await conn.execute(
             text(
                 "INSERT INTO scenarios "
-                "(id, suite_id, name, persona, persona_initials, source) VALUES " + values_sql
+                "(id, suite_id, name, persona_id, source) VALUES " + values_sql
             ),
             params,
         )
@@ -125,7 +133,7 @@ def _reduce_expected(rows: list[dict[str, Any]]) -> dict[str, Any]:
 async def _seed_batch(
     engine: AsyncEngine,
     agent_id: uuid.UUID,
-    scenario_persona: list[tuple[uuid.UUID, str]],
+    scenario_persona: list[tuple[uuid.UUID, uuid.UUID]],
     n_children: int,
 ) -> tuple[uuid.UUID, list[dict[str, Any]]]:
     """One multi-row INSERT for the parent + all children -- one

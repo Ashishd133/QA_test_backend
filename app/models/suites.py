@@ -26,6 +26,10 @@ class Suite(Base, OrgScopedMixin, TimestampMixin):
     # gates on nothing," and B2.7-08's evaluator has to handle the NULL case
     # either way, so it isn't hidden behind a default.
     rubric: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)
+    # B2.7-11: a flat text label, not a table -- "resist the tree" per the
+    # ticket. NULL means "no folder" (the default, top-level state), not the
+    # empty string.
+    folder: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class Scenario(Base, OrgScopedMixin, TimestampMixin):
@@ -40,12 +44,6 @@ class Scenario(Base, OrgScopedMixin, TimestampMixin):
         ForeignKey("suites.id", ondelete="CASCADE"), nullable=False
     )
     name: Mapped[str] = mapped_column(Text, nullable=False)
-    # B2.7-01: kept alongside persona_id below for one release's dual-write
-    # (B2.7-11 drops these once every write path populates persona_id) --
-    # this is why GET /v1/suites/{id} still serializes identically for
-    # pre-existing scenarios during the transition.
-    persona: Mapped[str] = mapped_column(Text, nullable=False)
-    persona_initials: Mapped[str] = mapped_column(Text, nullable=False)
     script: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)
     assertions: Mapped[dict[str, object]] = mapped_column(
         JSONB, nullable=False, server_default="[]"
@@ -57,12 +55,11 @@ class Scenario(Base, OrgScopedMixin, TimestampMixin):
     # scenario_metrics (many, scored, not binary). NULL for scenarios
     # authored before this ticket; goalMet has nothing to evaluate for them.
     goal: Mapped[str | None] = mapped_column(Text, nullable=True)
-    # Nullable during the dual-write window (see `persona` above); backfilled
-    # for existing scenarios by this migration's data step where a personas
-    # row with a matching name exists (it does for every seeded scenario
-    # except the reference-agent one, which predates the personas table
-    # entirely and has no row to match).
-    persona_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("personas.id"), nullable=True)
+    # B2.7-01/11: the sole source of a scenario's persona as of migration
+    # 016 -- the original `persona`/`persona_initials` text dual-write
+    # columns are gone (see migration 015's docstring for why they were
+    # ever nullable, and 016's for the backfill that preceded the drop).
+    persona_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("personas.id"), nullable=False)
     # SET NULL, not CASCADE/RESTRICT: a deleted test profile shouldn't take
     # the scenario down with it, just drop the reference (same reasoning as
     # runs.scenario_id's ondelete in migration 002).

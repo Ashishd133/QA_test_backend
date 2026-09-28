@@ -339,12 +339,15 @@ async def _seed_suite_with_rubric(
 
 async def _seed_scenario(conn: AsyncConnection, suite_id: uuid.UUID) -> uuid.UUID:
     scenario_id = uuid.uuid4()
+    persona_id = (
+        await conn.execute(text("SELECT id FROM personas WHERE builtin = true LIMIT 1"))
+    ).scalar_one()
     await conn.execute(
         text(
-            "INSERT INTO scenarios (id, suite_id, name, persona, persona_initials, source) "
-            "VALUES (:id, :suite_id, 'Rubric Test Scenario', 'x', 'X', 'manual')"
+            "INSERT INTO scenarios (id, suite_id, name, persona_id, source) "
+            "VALUES (:id, :suite_id, 'Rubric Test Scenario', :persona_id, 'manual')"
         ),
-        {"id": scenario_id, "suite_id": suite_id},
+        {"id": scenario_id, "suite_id": suite_id, "persona_id": persona_id},
     )
     return scenario_id
 

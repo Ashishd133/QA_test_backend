@@ -20,15 +20,36 @@ class APIModel(BaseModel):
     model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
 
 
+class ScenarioMetricAttachment(APIModel):
+    """B2.7-11: which metrics a scenario attaches, and whether each gates
+    the call's verdict (B2.7-08 reads exactly this via `scenario_metrics`).
+    Attaching a metric here does NOT change which metrics get *scored* for
+    the call -- that's resolve_metrics_for_agent's job (agent > project >
+    builtin), unaffected by this table. This is purely the gating flag."""
+
+    metric_id: str
+    gating: bool = False
+
+
 class ScenarioSummary(APIModel):
     id: str
     suite_id: str
     name: str
     persona: str
+    persona_id: str | None = None
     assert_count: int
     status: Verdict
     score: str
     run_id: str
+
+
+class ScenarioDetail(ScenarioSummary):
+    goal: str | None = None
+    test_profile_id: str | None = None
+    conditions: dict[str, object] | None = None
+    script: dict[str, object] | None = None
+    assertions: list[object] = Field(default_factory=list)
+    metrics: list[ScenarioMetricAttachment] = Field(default_factory=list)
 
 
 class SuiteListItem(APIModel):
@@ -41,6 +62,8 @@ class SuiteListItem(APIModel):
     pass_rate: str
     pr: int
     count: int
+    folder: str | None = None
+    rubric: dict[str, object] | None = None
 
 
 class SuiteDetail(SuiteListItem):
@@ -51,37 +74,73 @@ class SuiteCreate(APIModel):
     name: str
     description: str | None = None
     agent_id: str
+    folder: str | None = None
+    rubric: dict[str, object] | None = None
 
 
 class SuiteUpdate(APIModel):
     name: str | None = None
     description: str | None = None
     agent_id: str | None = None
+    folder: str | None = None
+    rubric: dict[str, object] | None = None
+
+
+class SuiteMoveRequest(APIModel):
+    """Bulk move (B2.7-11): reassign `folder` on many suites in one call.
+    `folder: None` moves them back to the top level, same meaning as the
+    column's own NULL -- not the empty string."""
+
+    suite_ids: list[str]
+    folder: str | None = None
 
 
 class ScenarioCreateRequest(APIModel):
-    """Manual creation requires name+persona; `fromDraftId` short-circuits
-    that (B1-01: idempotent via scenarios.source_draft_ref UNIQUE)."""
+    """Manual creation requires name+personaId; `fromDraftId` short-circuits
+    that (B1-01: idempotent via scenarios.source_draft_ref UNIQUE). A
+    from-draft creation may still pass `personaId` to override the draft's
+    own (free-text, unresolved) persona suggestion; when omitted, the
+    server tries an exact case-insensitive name match against personas
+    visible to the project and 422s (`persona_not_found`) if none matches."""
 
     from_draft_id: str | None = None
     name: str | None = None
-    persona: str | None = None
-    persona_initials: str | None = None
+    persona_id: str | None = None
     script: dict[str, object] | None = None
     assertions: list[object] = Field(default_factory=list)
+    goal: str | None = None
+    test_profile_id: str | None = None
+    conditions: dict[str, object] | None = None
+    metrics: list[ScenarioMetricAttachment] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _check_shape(self) -> "ScenarioCreateRequest":
-        if self.from_draft_id is None and (not self.name or not self.persona):
-            raise ValueError("name and persona are required when fromDraftId is not provided")
+        if self.from_draft_id is None and (not self.name or not self.persona_id):
+            raise ValueError("name and personaId are required when fromDraftId is not provided")
         return self
 
 
 class ScenarioUpdate(APIModel):
     name: str | None = None
-    persona: str | None = None
+    persona_id: str | None = None
     script: dict[str, object] | None = None
     assertions: list[object] | None = None
+    goal: str | None = None
+    test_profile_id: str | None = None
+    conditions: dict[str, object] | None = None
+    metrics: list[ScenarioMetricAttachment] | None = None
+
+
+class ScenarioDuplicateRequest(APIModel):
+    """B2.7-11 bulk op: copy a scenario into another suite, optionally in
+    another project. `targetProjectId` omitted/equal to the caller's own
+    project means a same-project duplicate (persona/testProfile refs reused
+    as-is); a genuinely cross-project duplicate copies any project-scoped
+    (non-builtin) persona/test-profile by value into the target project
+    rather than leaving a dangling cross-project reference."""
+
+    target_suite_id: str
+    target_project_id: str | None = None
 
 
 class SuiteRunCreate(APIModel):

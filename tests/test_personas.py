@@ -200,8 +200,8 @@ async def test_delete_persona_conflict_when_referenced_and_builtin_refused() -> 
             await conn.execute(
                 text(
                     "INSERT INTO scenarios "
-                    "(id, suite_id, name, persona, persona_initials, source, persona_id) "
-                    "VALUES (:id, :suite_id, 'Ref Scenario', 'x', 'X', 'manual', :persona_id)"
+                    "(id, suite_id, name, source, persona_id) "
+                    "VALUES (:id, :suite_id, 'Ref Scenario', 'manual', :persona_id)"
                 ),
                 {
                     "id": scenario_id,

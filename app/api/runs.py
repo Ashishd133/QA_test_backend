@@ -435,21 +435,24 @@ async def list_runs(
 _RUN_DETAIL_SQL = text(
     "SELECT r.id, r.type, r.status, r.metrics, r.created_at, r.started_at, r.ended_at, "
     "       r.project_id, r.end_reason, r.cost, r.recording_url, r.parent_run_id, r.trigger, "
-    "       r.scenario_id, sc.persona, sc.goal AS scenario_goal, "
+    "       r.scenario_id, p.name AS persona, sc.goal AS scenario_goal, "
     "       a.name AS agent_name, a.transport, a.language, "
     "       sc.name AS scenario_name, s.name AS suite_name "
     "FROM runs r "
     "JOIN agents a ON a.id = r.agent_id "
     "LEFT JOIN scenarios sc ON sc.id = r.scenario_id "
     "LEFT JOIN suites s ON s.id = sc.suite_id "
+    "LEFT JOIN personas p ON p.id = sc.persona_id "
     "WHERE r.id = :id"
 )
 
 _RUN_EVENTS_SQL = text("SELECT type, data FROM run_events WHERE run_id = :run_id ORDER BY seq")
 
 _CHILDREN_FOR_AGGREGATE_SQL = text(
-    "SELECT r.id, r.status, r.metrics, r.cost, r.scenario_id, sc.persona "
-    "FROM runs r LEFT JOIN scenarios sc ON sc.id = r.scenario_id "
+    "SELECT r.id, r.status, r.metrics, r.cost, r.scenario_id, p.name AS persona "
+    "FROM runs r "
+    "LEFT JOIN scenarios sc ON sc.id = r.scenario_id "
+    "LEFT JOIN personas p ON p.id = sc.persona_id "
     "WHERE r.parent_run_id = :parent_id"
 )
 

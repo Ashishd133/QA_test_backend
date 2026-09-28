@@ -1,9 +1,11 @@
 import asyncio.constants
 import os
+import uuid
 from collections.abc import AsyncGenerator
 
 import pytest
 from cryptography.fernet import Fernet
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from app.config import get_settings
@@ -61,6 +63,21 @@ def auth_headers(
     if project_id is not None:
         headers["X-Project-Id"] = str(project_id)
     return headers
+
+
+async def builtin_persona_id(engine: AsyncEngine) -> uuid.UUID:
+    """B2.7-11: scenarios.persona_id is NOT NULL now, so any test that
+    inserts a scenario row directly via raw SQL needs a real persona to
+    point at -- any seeded builtin (app.seed._seed_personas) will do, since
+    none of these tests care which one. Centralized here rather than each
+    file hardcoding a name or inserting its own throwaway row, so a future
+    change to the seeded set doesn't mean editing every test file again."""
+    async with engine.connect() as conn:
+        row = (
+            await conn.execute(text("SELECT id FROM personas WHERE builtin = true LIMIT 1"))
+        ).first()
+    assert row is not None, "no builtin persona seeded -- run `uv run python -m app.seed` first"
+    return row[0]
 
 
 def _test_engine() -> AsyncEngine:
