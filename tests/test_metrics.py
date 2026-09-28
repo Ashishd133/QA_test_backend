@@ -12,6 +12,7 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from app.engine.metrics.backtest import spec_hash
 from app.main import app
 from tests.conftest import _test_engine, auth_headers, requires_test_db
 
@@ -38,6 +39,26 @@ async def _insert_builtin(engine: AsyncEngine, name: str) -> uuid.UUID:
             {"id": metric_id, "name": name},
         )
     return metric_id
+
+
+async def _insert_matching_backtest(
+    engine: AsyncEngine, metric_id: uuid.UUID, spec: dict[str, object]
+) -> None:
+    """B2.7-10's PATCH status=active guard requires a metric_backtests row
+    whose spec_hash matches the metric's current spec -- inserted directly
+    here (not via POST /v1/metrics/{id}/backtest) so tests unrelated to
+    backtesting itself don't need real historical runs or, for an
+    llm_judge-kind metric, a real judge client."""
+    async with engine.connect() as conn, conn.begin():
+        await conn.execute(
+            text(
+                "INSERT INTO metric_backtests "
+                "(id, metric_id, spec_hash, sample_size, filters, cost, created_by_user_id) "
+                "VALUES (:id, :metric_id, :spec_hash, 0, CAST('{}' AS jsonb), "
+                " CAST('{}' AS jsonb), 'user-1')"
+            ),
+            {"id": uuid.uuid4(), "metric_id": metric_id, "spec_hash": spec_hash(spec)},
+        )
 
 
 async def _cleanup(
@@ -245,6 +266,8 @@ async def test_update_metric_bumps_version_only_when_active() -> None:
         )
         metric_id = create_response.json()["id"]
 
+        await _insert_matching_backtest(engine, uuid.UUID(metric_id), {})
+
         # draft -> active: first activation, not "editing an active metric".
         activate_response = await client.patch(
             f"/v1/metrics/{metric_id}", json={"status": "active"}
@@ -333,6 +356,7 @@ async def test_resolved_metrics_agent_override_shadows_project_only_for_that_age
             },
         )
         project_metric_id = project_metric.json()["id"]
+        await _insert_matching_backtest(engine, uuid.UUID(project_metric_id), {"level": "project"})
         await client.patch(f"/v1/metrics/{project_metric_id}", json={"status": "active"})
 
         agent_a_metric = await client.post(
@@ -346,6 +370,7 @@ async def test_resolved_metrics_agent_override_shadows_project_only_for_that_age
             },
         )
         agent_a_metric_id = agent_a_metric.json()["id"]
+        await _insert_matching_backtest(engine, uuid.UUID(agent_a_metric_id), {"level": "agent-a"})
         await client.patch(f"/v1/metrics/{agent_a_metric_id}", json={"status": "active"})
 
         # Scenario under agent A: the agent-level override wins.
