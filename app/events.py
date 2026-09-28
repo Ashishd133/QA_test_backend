@@ -22,6 +22,7 @@ from app.schemas.events import (
     EventData,
     ExposureData,
     IntentData,
+    MetricResultData,
     MetricsData,
     NodeData,
     ProgressData,
@@ -34,6 +35,7 @@ EventType = Literal[
     "turn",
     "metrics",
     "assertion",
+    "metric_result",
     "node",
     "intent",
     "attack",
@@ -112,6 +114,30 @@ def assertion_event(
             status=status,
             triggered_at_turn=triggered_at_turn,
             note=note,
+        ),
+    )
+
+
+def metric_result_event(
+    *,
+    metric_id: str,
+    metric_version: int,
+    name: str,
+    status: Literal["passed", "failed", "warn", "error", "not_sampled", "not_computable"],
+    value: str | float | bool | None = None,
+    turn_refs: list[int] | None = None,
+    rationale: str | None = None,
+) -> Event:
+    return Event(
+        type="metric_result",
+        data=MetricResultData(
+            metric_id=metric_id,
+            metric_version=metric_version,
+            name=name,
+            status=status,
+            value=value,
+            turn_refs=turn_refs or [],
+            rationale=rationale,
         ),
     )
 

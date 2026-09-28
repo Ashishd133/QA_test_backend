@@ -914,6 +914,81 @@
         "title": "MetricDetail",
         "type": "object"
       },
+      "MetricResultData": {
+        "description": "B2.7-06: one event per (run, metric) -- app/workers/materialize.py\nupserts these into `metric_results`, same \"events are the source of\ntruth, the table is a materialized convenience\" shape as assertions.\n`metric_version` is stamped from the live metric's version *at scoring\ntime* (B2.7-04's own guarantee: a later PATCH bumping the live\nversion must never change what an already-written row says produced\nit).",
+        "properties": {
+          "metricId": {
+            "title": "Metricid",
+            "type": "string"
+          },
+          "metricVersion": {
+            "title": "Metricversion",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "rationale": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Rationale"
+          },
+          "status": {
+            "enum": [
+              "passed",
+              "failed",
+              "warn",
+              "error",
+              "not_sampled",
+              "not_computable"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "turnRefs": {
+            "default": [],
+            "items": {
+              "type": "integer"
+            },
+            "title": "Turnrefs",
+            "type": "array"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Value"
+          }
+        },
+        "required": [
+          "metricId",
+          "metricVersion",
+          "name",
+          "status"
+        ],
+        "title": "MetricResultData",
+        "type": "object"
+      },
       "MetricUpdate": {
         "properties": {
           "description": {

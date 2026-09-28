@@ -46,6 +46,24 @@ class AssertionData(EventData):
     note: str | None = None
 
 
+class MetricResultData(EventData):
+    """B2.7-06: one event per (run, metric) -- app/workers/materialize.py
+    upserts these into `metric_results`, same "events are the source of
+    truth, the table is a materialized convenience" shape as assertions.
+    `metric_version` is stamped from the live metric's version *at scoring
+    time* (B2.7-04's own guarantee: a later PATCH bumping the live
+    version must never change what an already-written row says produced
+    it)."""
+
+    metric_id: str
+    metric_version: int
+    name: str
+    status: Literal["passed", "failed", "warn", "error", "not_sampled", "not_computable"]
+    value: str | float | bool | None = None
+    turn_refs: list[int] = []
+    rationale: str | None = None
+
+
 class NodeData(EventData):
     node_id: str
     label: str

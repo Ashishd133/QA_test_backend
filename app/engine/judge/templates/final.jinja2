@@ -13,6 +13,22 @@ Definition: {{ a.description }}
 Distinguish from: {{ a.distinguish_from }}
 {% endif %}
 {% endfor %}
+{% if metrics %}
+
+## Metrics
+
+These are scored separately from the signals above -- resolve each one the
+same evidence-first way, but report it under `metrics`, not `assertions`.
+
+{% for m in metrics %}
+### {{ m.metric_id }}: {{ m.name }}
+
+Definition: {{ m.description }}
+{% if m.distinguish_from %}
+Distinguish from: {{ m.distinguish_from }}
+{% endif %}
+{% endfor %}
+{% endif %}
 
 ## Full transcript (0-indexed; cite these indices as turn_refs)
 
@@ -44,6 +60,17 @@ obligation or a prohibition, and each fails differently:
 `final_score` is your 0-100 holistic quality score for the whole call.
 `sentiment` is the caller's apparent sentiment by the end of the call.
 `summary` is one or two sentences a human reviewer would read first.
+{% if metrics %}
+
+For every entry under "## Metrics", write `analysis` first the same way,
+then report it under `metrics` (not `assertions`) with `status` "passed",
+"failed", or "warn" -- "warn" is for a metric that's technically not a
+hard failure but worth a human's attention (never use it as a way to avoid
+committing to passed/failed on something you have clear evidence for).
+`value` is always a short string, whatever's natural for that metric (a
+number as text, "true"/"false", an enum label) -- never a number, boolean,
+or nested object.
+{% endif %}
 
 Respond with exactly one JSON object matching the required schema. No prose
 outside the JSON.

@@ -10,6 +10,7 @@ read path yet (RunDetail only exposes transcript/resultAssertions), so
 there's nothing for a materialized copy of those to agree with.
 """
 
+import json
 import uuid
 
 from sqlalchemy import text
@@ -20,6 +21,9 @@ _MATERIALIZE_TURNS_SQL = text(
 )
 _MATERIALIZE_ASSERTIONS_SQL = text(
     "SELECT data FROM run_events WHERE run_id = :run_id AND type = 'assertion' ORDER BY seq"
+)
+_MATERIALIZE_METRIC_RESULTS_SQL = text(
+    "SELECT data FROM run_events WHERE run_id = :run_id AND type = 'metric_result' ORDER BY seq"
 )
 _INSERT_TURN_SQL = text(
     "INSERT INTO turns (run_id, idx, role, text, latency_ms, flagged, flag_reason) "
@@ -32,6 +36,15 @@ _UPSERT_ASSERTION_SQL = text(
     "ON CONFLICT (run_id, assertion_id) DO UPDATE SET "
     "name = EXCLUDED.name, status = EXCLUDED.status, note = EXCLUDED.note, "
     "triggered_at_turn = EXCLUDED.triggered_at_turn"
+)
+_UPSERT_METRIC_RESULT_SQL = text(
+    "INSERT INTO metric_results "
+    "(run_id, metric_id, metric_version, status, value, turn_refs, rationale) "
+    "VALUES (:run_id, :metric_id, :metric_version, :status, "
+    " CAST(:value AS jsonb), :turn_refs, :rationale) "
+    "ON CONFLICT (run_id, metric_id) DO UPDATE SET "
+    "metric_version = EXCLUDED.metric_version, status = EXCLUDED.status, "
+    "value = EXCLUDED.value, turn_refs = EXCLUDED.turn_refs, rationale = EXCLUDED.rationale"
 )
 
 
@@ -69,5 +82,22 @@ async def materialize_run(conn: AsyncConnection, run_id: uuid.UUID) -> None:
                 "status": data["status"],
                 "note": data.get("note"),
                 "triggered_at_turn": data.get("triggeredAtTurn"),
+            },
+        )
+
+    metric_result_rows = (
+        (await conn.execute(_MATERIALIZE_METRIC_RESULTS_SQL, {"run_id": run_id})).scalars().all()
+    )
+    for data in metric_result_rows:
+        await conn.execute(
+            _UPSERT_METRIC_RESULT_SQL,
+            {
+                "run_id": run_id,
+                "metric_id": uuid.UUID(data["metricId"]),
+                "metric_version": data["metricVersion"],
+                "status": data["status"],
+                "value": json.dumps(data.get("value")),
+                "turn_refs": data.get("turnRefs", []),
+                "rationale": data.get("rationale"),
             },
         )

@@ -20,7 +20,13 @@ from google.genai import types
 from opentelemetry import trace
 from pydantic import BaseModel
 
-from app.engine.judge.models import AssertionSpec, FinalVerdict, IncrementalVerdict, TranscriptTurn
+from app.engine.judge.models import (
+    AssertionSpec,
+    CompiledMetricSignal,
+    FinalVerdict,
+    IncrementalVerdict,
+    TranscriptTurn,
+)
 from app.engine.judge.prompts import (
     FINAL_PROMPT_VERSION,
     INCREMENTAL_PROMPT_VERSION,
@@ -188,9 +194,12 @@ class FinalJudge:
         self.usage = usage if usage is not None else UsageTracker()
 
     async def evaluate(
-        self, assertions: list[AssertionSpec], transcript: list[TranscriptTurn]
+        self,
+        assertions: list[AssertionSpec],
+        transcript: list[TranscriptTurn],
+        metrics: list[CompiledMetricSignal] | None = None,
     ) -> FinalVerdict:
-        prompt = render_final_prompt(assertions, transcript)
+        prompt = render_final_prompt(assertions, transcript, metrics)
         return await _generate_verdict(
             self._client,
             model=self._model,

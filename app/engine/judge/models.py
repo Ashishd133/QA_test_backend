@@ -37,6 +37,23 @@ class AssertionState:
     status: Literal["undetermined", "passed", "failed"]
 
 
+@dataclass(frozen=True)
+class CompiledMetricSignal:
+    """B2.7-06: an `llm_judge`-kind resolved metric, reshaped into the same
+    id/description/distinguish_from-from shape `AssertionSpec` already
+    uses -- rendered into `final.jinja2` as an additional signal block,
+    same Definition/Distinguish-from house style, batched into the *same*
+    final-pass call rather than a separate one per metric (app.engine.
+    metrics.resolver's `ResolvedMetric.spec` holds `description`/
+    `distinguish_from` for every llm_judge builtin -- see
+    app/engine/metrics/builtins.py)."""
+
+    metric_id: str
+    name: str
+    description: str
+    distinguish_from: str = ""
+
+
 class AssertionFlip(BaseModel):
     """`analysis` is declared before the verdict fields deliberately: Gemini's
     structured output fills schema fields in declaration order, so this is
@@ -64,9 +81,30 @@ class FinalAssertionNote(BaseModel):
     note: str
 
 
+class MetricVerdict(BaseModel):
+    """`value` is always a string on the wire, never a `float | str | bool`
+    union: Gemini's structured-output support (`response_schema=`) is
+    unreliable against Pydantic unions, so every metric kind (numeric,
+    boolean, tri_state, enum) reports its value as text here, and
+    app.engine.metrics.compiler is what coerces it into the right shape
+    for MetricResult once this comes back -- never the judge's own
+    response schema."""
+
+    metric_id: str
+    analysis: str
+    status: Literal["passed", "failed", "warn"]
+    value: str
+    turn_refs: list[int] = Field(min_length=1)
+    rationale: str
+
+
 class FinalVerdict(BaseModel):
     final_score: int = Field(ge=0, le=100)
     assertions: list[FinalAssertionNote]
+    # B2.7-06: empty by default so every existing call site (evaluate()
+    # with no metrics, every golden-eval case) is unaffected -- see
+    # FinalJudge.evaluate's own optional `metrics` kwarg.
+    metrics: list[MetricVerdict] = Field(default_factory=list)
     sentiment: Literal["positive", "neutral", "negative"]
     summary: str
 
@@ -75,8 +113,10 @@ __all__ = [
     "AssertionFlip",
     "AssertionSpec",
     "AssertionState",
+    "CompiledMetricSignal",
     "FinalAssertionNote",
     "FinalVerdict",
     "IncrementalVerdict",
+    "MetricVerdict",
     "TranscriptTurn",
 ]

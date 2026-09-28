@@ -9,11 +9,16 @@ on:
     branches: [main]
     paths:
       - "app/engine/judge/**"
+      # B2.7-06: metric compilation renders into the judge's own prompts
+      # (app/engine/judge/templates/final.jinja2) -- a change here can move
+      # verdicts exactly like a judge/ change can, so it needs the same gate.
+      - "app/engine/metrics/**"
       - "evals/**"
       - "tests/test_judge_evals.py"
   pull_request:
     paths:
       - "app/engine/judge/**"
+      - "app/engine/metrics/**"
       - "evals/**"
       - "tests/test_judge_evals.py"
 

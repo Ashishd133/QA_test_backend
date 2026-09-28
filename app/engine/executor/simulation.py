@@ -53,11 +53,21 @@ from app.engine.caller.persona import PersonaSpec, Turn
 from app.engine.caller.persona_call import CallEndReason, run_persona_call
 from app.engine.judge.judge import FinalJudge, GenAIClient, IncrementalJudge, build_vertex_client
 from app.engine.judge.models import AssertionSpec
+from app.engine.metrics.compiler import (
+    MetricOutcome,
+    compile_metrics,
+    evaluate_builtin_metric,
+    evaluate_python_metric,
+    not_sampled_outcomes,
+    outcomes_from_judge_verdicts,
+)
+from app.engine.metrics.resolver import resolve_metrics_for_agent
 from app.events import (
     assertion_event,
     done_event,
     emit,
     error_event,
+    metric_result_event,
     metrics_event,
     status_event,
     turn_event,
@@ -190,6 +200,21 @@ async def _load_scenario(
     )
 
 
+async def _resolve_run_metrics(engine: AsyncEngine, agent_id: uuid.UUID) -> list[RowMapping]:
+    """B2.7-06: resolved once per run (not once per metric), scoped to the
+    agent's project. `resolve_metrics_for_agent` already applies the
+    agent > project > builtin precedence chain (app.engine.metrics.
+    resolver) -- this is just the project_id lookup that call needs,
+    since ClaimedRun carries agent_id but not project_id directly."""
+    async with engine.connect() as conn:
+        project_id = (
+            await conn.execute(
+                text("SELECT project_id FROM agents WHERE id = :id"), {"id": agent_id}
+            )
+        ).scalar_one()
+        return await resolve_metrics_for_agent(conn, project_id=project_id, agent_id=agent_id)
+
+
 def _build_judge_client() -> GenAIClient:
     settings = get_settings()
     credentials = load_google_oauth2_credentials()
@@ -318,6 +343,16 @@ async def _run_simulation_body(engine: AsyncEngine, claimed: ClaimedRun) -> None
         await run_fake_script(engine, claimed)
         return
 
+    try:
+        resolved_metrics = await _resolve_run_metrics(engine, claimed.agent_id)
+    except Exception:
+        # A metric can never take the whole run down (B2.7-04's own "never
+        # a crashed executor" bar extends to resolving them, not just
+        # scoring them) -- fall back to an empty set and keep going;
+        # assertions/goal still score normally either way.
+        logger.exception(f"failed to resolve metrics for run {run_id}, scoring none")
+        resolved_metrics = []
+
     async with engine.connect() as conn, conn.begin():
         await conn.execute(
             text("UPDATE runs SET status = 'running', started_at = now() WHERE id = :id"),
@@ -341,6 +376,7 @@ async def _run_simulation_body(engine: AsyncEngine, claimed: ClaimedRun) -> None
             claimed.parent_run_id,
             persona_spec,
             assertion_specs,
+            resolved_metrics,
             cancel_event,
             cancel_watcher_task,
             heartbeat_task,
@@ -353,6 +389,7 @@ async def _run_simulation_traced(
     parent_run_id: uuid.UUID | None,
     persona_spec: PersonaSpec,
     assertion_specs: list[AssertionSpec],
+    resolved_metrics: list[RowMapping],
     cancel_event: asyncio.Event,
     cancel_watcher_task: asyncio.Task[None],
     heartbeat_task: asyncio.Task[None],
@@ -573,14 +610,39 @@ async def _run_simulation_traced(
                     await maybe_close_parent(conn, run_id)
                 return
 
+            judge_transcript = [TranscriptTurn(role=t.speaker, text=t.text) for t in transcript]
+            compiled = compile_metrics(resolved_metrics, run_id=run_id)
+
             with get_tracer().start_as_current_span(
                 "judge.final_evaluate", attributes=_span_attributes(run_id, parent_run_id)
             ):
                 final_verdict = await final_judge.evaluate(
-                    assertion_specs,
-                    [TranscriptTurn(role=t.speaker, text=t.text) for t in transcript],
+                    assertion_specs, judge_transcript, metrics=compiled.llm_judge_signals
                 )
             final_usd_score = final_verdict.final_score / 100
+
+            # B2.7-06: builtin/python metrics dispatch outside the judge
+            # call entirely (they don't touch the LLM at all, so they
+            # never count against the "≤2 calls per turn" budget); python
+            # ones run concurrently since each is an independent sandboxed
+            # subprocess with its own timeout.
+            metric_outcomes: list[MetricOutcome] = outcomes_from_judge_verdicts(
+                final_verdict.metrics, compiled.llm_judge_rows
+            )
+            latencies_ms = [tl.latency_ms for tl in latency_clock.turn_latencies]
+            metric_outcomes += [
+                evaluate_builtin_metric(row, judge_transcript, latencies_ms)
+                for row in compiled.builtin_rows
+            ]
+            if compiled.python_rows:
+                python_context: dict[str, object] = {
+                    "transcript": [{"role": t.role, "text": t.text} for t in judge_transcript]
+                }
+                metric_outcomes += await asyncio.gather(
+                    *(evaluate_python_metric(row, python_context) for row in compiled.python_rows)
+                )
+            metric_outcomes += not_sampled_outcomes(compiled.not_sampled_rows)
+            metric_names = {str(row["id"]): row["name"] for row in resolved_metrics}
 
             async with engine.connect() as conn, conn.begin():
                 current_status = (
@@ -608,6 +670,23 @@ async def _run_simulation_traced(
                             status=note.status,
                             triggered_at_turn=note.turn_refs[0] if note.turn_refs else None,
                             note=note.note,
+                        ),
+                    )
+
+                for outcome in metric_outcomes:
+                    await emit(
+                        conn,
+                        run_id,
+                        metric_result_event(
+                            metric_id=outcome.metric_id,
+                            metric_version=outcome.metric_version,
+                            name=metric_names.get(outcome.metric_id, outcome.metric_id),
+                            status=outcome.status,
+                            value=outcome.value
+                            if isinstance(outcome.value, str | float | bool)
+                            else None,
+                            turn_refs=outcome.turn_refs,
+                            rationale=outcome.rationale,
                         ),
                     )
 
