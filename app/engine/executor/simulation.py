@@ -62,6 +62,7 @@ from app.engine.metrics.compiler import (
     outcomes_from_judge_verdicts,
 )
 from app.engine.metrics.resolver import resolve_metrics_for_agent
+from app.engine.rubric import GatingMetricResult, evaluate_call
 from app.events import (
     assertion_event,
     done_event,
@@ -383,6 +384,7 @@ async def _run_simulation_body(engine: AsyncEngine, claimed: ClaimedRun) -> None
             engine,
             run_id,
             claimed.parent_run_id,
+            claimed.scenario_id,
             persona_spec,
             assertion_specs,
             resolved_metrics,
@@ -397,6 +399,7 @@ async def _run_simulation_traced(
     engine: AsyncEngine,
     run_id: uuid.UUID,
     parent_run_id: uuid.UUID | None,
+    scenario_id: uuid.UUID,
     persona_spec: PersonaSpec,
     assertion_specs: list[AssertionSpec],
     resolved_metrics: list[RowMapping],
@@ -704,7 +707,34 @@ async def _run_simulation_traced(
                         ),
                     )
 
-                result_badge = _badge_from_final_score(final_verdict.final_score)
+                # B2.7-08: scenario_metrics.gating is the source of truth
+                # for which of this scenario's metrics decide its verdict
+                # (B2.7-11 exposes attaching it via the API; until then
+                # this is always empty, so every call falls back to the
+                # pre-existing score-only badge below, unchanged).
+                gating_ids = (
+                    (
+                        await conn.execute(
+                            text(
+                                "SELECT metric_id FROM scenario_metrics "
+                                "WHERE scenario_id = :scenario_id AND gating"
+                            ),
+                            {"scenario_id": scenario_id},
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+                gating_id_strs = {str(mid) for mid in gating_ids}
+                gating_results = [
+                    GatingMetricResult(metric_id=o.metric_id, status=o.status)
+                    for o in metric_outcomes
+                    if o.metric_id in gating_id_strs
+                ]
+                result_badge = evaluate_call(
+                    gating_results,
+                    default_badge=_badge_from_final_score(final_verdict.final_score),
+                )
                 done = done_event(score=final_usd_score, result_badge=result_badge)
                 await emit(conn, run_id, done)
                 await materialize_run(conn, run_id)

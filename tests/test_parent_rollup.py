@@ -9,6 +9,7 @@ same as tests/test_run_call_aggregate.py.
 """
 
 import asyncio
+import json
 import uuid
 from collections.abc import AsyncIterator
 
@@ -109,8 +110,7 @@ async def _cleanup(engine: AsyncEngine, agent_id: uuid.UUID) -> None:
     async with engine.connect() as conn, conn.begin():
         await conn.execute(
             text(
-                "DELETE FROM run_events "
-                "WHERE run_id IN (SELECT id FROM runs WHERE agent_id = :id)"
+                "DELETE FROM run_events WHERE run_id IN (SELECT id FROM runs WHERE agent_id = :id)"
             ),
             {"id": agent_id},
         )
@@ -321,3 +321,136 @@ async def test_concurrent_siblings_finishing_together_close_parent_exactly_once(
         assert len(status_events) == 1
     finally:
         await _cleanup(engine, agent_id)
+
+
+async def _seed_suite_with_rubric(
+    conn: AsyncConnection, agent_id: uuid.UUID, rubric: dict[str, object] | None
+) -> uuid.UUID:
+    suite_id = uuid.uuid4()
+    await conn.execute(
+        text(
+            "INSERT INTO suites (id, name, agent_id, created_by_user_id, rubric) "
+            "VALUES (:id, 'Rubric Test Suite', :agent_id, 'user-1', CAST(:rubric AS jsonb))"
+        ),
+        {"id": suite_id, "agent_id": agent_id, "rubric": json.dumps(rubric)},
+    )
+    return suite_id
+
+
+async def _seed_scenario(conn: AsyncConnection, suite_id: uuid.UUID) -> uuid.UUID:
+    scenario_id = uuid.uuid4()
+    await conn.execute(
+        text(
+            "INSERT INTO scenarios (id, suite_id, name, persona, persona_initials, source) "
+            "VALUES (:id, :suite_id, 'Rubric Test Scenario', 'x', 'X', 'manual')"
+        ),
+        {"id": scenario_id, "suite_id": suite_id},
+    )
+    return scenario_id
+
+
+async def _seed_child_with_badge(
+    conn: AsyncConnection,
+    agent_id: uuid.UUID,
+    parent_id: uuid.UUID,
+    scenario_id: uuid.UUID,
+    *,
+    result_badge: str,
+) -> uuid.UUID:
+    child_id = uuid.uuid4()
+    await conn.execute(
+        text(
+            "INSERT INTO runs (id, type, status, agent_id, scenario_id, parent_run_id, "
+            " created_by_user_id, metrics) "
+            "VALUES (:id, 'simulation', 'completed', :agent_id, :scenario_id, :parent_id, "
+            " 'user-1', CAST(:metrics AS jsonb))"
+        ),
+        {
+            "id": child_id,
+            "agent_id": agent_id,
+            "scenario_id": scenario_id,
+            "parent_id": parent_id,
+            "metrics": json.dumps({"resultBadge": result_badge}),
+        },
+    )
+    return child_id
+
+
+async def _cleanup_with_suite(
+    engine: AsyncEngine, agent_id: uuid.UUID, suite_id: uuid.UUID
+) -> None:
+    async with engine.connect() as conn, conn.begin():
+        await conn.execute(
+            text(
+                "DELETE FROM run_events WHERE run_id IN (SELECT id FROM runs WHERE agent_id = :id)"
+            ),
+            {"id": agent_id},
+        )
+        await conn.execute(text("DELETE FROM runs WHERE agent_id = :id"), {"id": agent_id})
+        await conn.execute(text("DELETE FROM scenarios WHERE suite_id = :id"), {"id": suite_id})
+        await conn.execute(text("DELETE FROM suites WHERE id = :id"), {"id": suite_id})
+        await conn.execute(text("DELETE FROM agents WHERE id = :id"), {"id": agent_id})
+
+
+async def test_batch_fails_when_fail_on_any_critical_and_a_child_failed(
+    engine: AsyncEngine,
+) -> None:
+    """B2.7-08's batch-side done-when: a rubric-configured suite's batch
+    verdict (runs.metrics.resultBadge on the PARENT) reflects
+    failOnAnyCritical, while status stays 'completed' regardless (verdict,
+    not lifecycle -- see app/workers/rollup.py's own module docstring)."""
+    async with engine.connect() as conn, conn.begin():
+        agent_id = await _seed_agent(conn)
+        suite_id = await _seed_suite_with_rubric(conn, agent_id, {"failOnAnyCritical": True})
+        scenario_id = await _seed_scenario(conn, suite_id)
+        parent_id = await _seed_parent(conn, agent_id)
+        first = await _seed_child_with_badge(
+            conn, agent_id, parent_id, scenario_id, result_badge="pass"
+        )
+        second = await _seed_child_with_badge(
+            conn, agent_id, parent_id, scenario_id, result_badge="fail"
+        )
+    try:
+        async with engine.connect() as conn, conn.begin():
+            await maybe_close_parent(conn, first)
+            await maybe_close_parent(conn, second)
+
+        parent_row = await _run_row(engine, parent_id)
+        assert parent_row["status"] == "completed"  # lifecycle unaffected by the rubric
+        async with engine.connect() as conn:
+            metrics = (
+                await conn.execute(
+                    text("SELECT metrics FROM runs WHERE id = :id"), {"id": parent_id}
+                )
+            ).scalar_one()
+        assert metrics["resultBadge"] == "fail"
+    finally:
+        await _cleanup_with_suite(engine, agent_id, suite_id)
+
+
+async def test_batch_without_a_rubric_defaults_to_pass_even_with_a_failed_child(
+    engine: AsyncEngine,
+) -> None:
+    """The pre-B2.7-08 convention, unchanged: a batch with no rubric
+    configured never fails on a child's own badge alone."""
+    async with engine.connect() as conn, conn.begin():
+        agent_id = await _seed_agent(conn)
+        suite_id = await _seed_suite_with_rubric(conn, agent_id, None)
+        scenario_id = await _seed_scenario(conn, suite_id)
+        parent_id = await _seed_parent(conn, agent_id)
+        child = await _seed_child_with_badge(
+            conn, agent_id, parent_id, scenario_id, result_badge="fail"
+        )
+    try:
+        async with engine.connect() as conn, conn.begin():
+            await maybe_close_parent(conn, child)
+
+        async with engine.connect() as conn:
+            metrics = (
+                await conn.execute(
+                    text("SELECT metrics FROM runs WHERE id = :id"), {"id": parent_id}
+                )
+            ).scalar_one()
+        assert metrics["resultBadge"] == "pass"
+    finally:
+        await _cleanup_with_suite(engine, agent_id, suite_id)
