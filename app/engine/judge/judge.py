@@ -20,6 +20,7 @@ from google.genai import types
 from opentelemetry import trace
 from pydantic import BaseModel
 
+from app.config import get_settings
 from app.engine.judge.models import (
     AssertionSpec,
     CompiledMetricSignal,
@@ -33,6 +34,7 @@ from app.engine.judge.prompts import (
     render_final_prompt,
     render_incremental_prompt,
 )
+from app.gcp_auth import load_google_oauth2_credentials
 from app.usage import UsageTracker
 
 DEFAULT_MODEL = "gemini-2.5-flash"
@@ -91,6 +93,20 @@ class GenAIClient(Protocol):
 
 def build_vertex_client(*, credentials: Credentials, project: str, location: str) -> genai.Client:
     return genai.Client(vertexai=True, credentials=credentials, project=project, location=location)
+
+
+def build_judge_client() -> GenAIClient:
+    """Shared by app.engine.executor.simulation (live scoring) and
+    app.api.metrics's backtest endpoint (B2.7-10) -- both need a real
+    judge client and neither should carry its own copy of this wiring."""
+    settings = get_settings()
+    credentials = load_google_oauth2_credentials()
+    client = build_vertex_client(
+        credentials=credentials,
+        project=settings.google_cloud_project,
+        location=settings.google_cloud_location,
+    )
+    return client  # type: ignore[return-value]
 
 
 async def _generate_verdict[VerdictT: BaseModel](

@@ -25,9 +25,20 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from app.db import get_engine
 from app.deps import ensure_project_match, require_project_id, require_user_id
+from app.engine.judge.judge import FinalJudge, build_judge_client
+from app.engine.metrics.backtest import run_backtest, spec_hash
 from app.engine.metrics.resolver import resolve_metrics_for_scenario, source_level
 from app.errors import APIError
-from app.schemas.metrics import MetricCreate, MetricDetail, MetricUpdate, ResolvedMetric
+from app.schemas.metrics import (
+    BacktestCallVerdict,
+    BacktestRequest,
+    BacktestResult,
+    MetricCreate,
+    MetricDetail,
+    MetricUpdate,
+    ResolvedMetric,
+)
+from app.usage import UsageTracker
 
 router = APIRouter(tags=["metrics"])
 
@@ -210,6 +221,31 @@ async def update_metric(
                 "builtin_read_only", "built-in metrics cannot be edited", status.HTTP_409_CONFLICT
             )
 
+        if body.status == "active":
+            # B2.7-10: bound to the *effective* spec this PATCH would leave
+            # the metric with (body.spec if also being changed in this same
+            # call, else the existing one) -- draft edits don't bump
+            # `version`, so a hash of the actual spec content is the only
+            # thing that can catch "backtested spec A, silently activating
+            # spec B" in a single request.
+            effective_spec = body.spec if body.spec is not None else existing["spec"]
+            has_matching_backtest = (
+                await conn.execute(
+                    text(
+                        "SELECT 1 FROM metric_backtests "
+                        "WHERE metric_id = :id AND spec_hash = :spec_hash LIMIT 1"
+                    ),
+                    {"id": metric_id, "spec_hash": spec_hash(effective_spec)},
+                )
+            ).first()
+            if has_matching_backtest is None:
+                raise APIError(
+                    "backtest_required",
+                    "this metric's current spec has not been backtested -- "
+                    "POST /v1/metrics/{id}/backtest first",
+                    status.HTTP_422_UNPROCESSABLE_CONTENT,
+                )
+
         updates: dict[str, Any] = {}
         for field in ("name", "description", "sampling_pct", "status"):
             value = getattr(body, field)
@@ -249,6 +285,91 @@ async def update_metric(
             .one()
         )
     return _metric_detail(row)
+
+
+@router.post(
+    "/v1/metrics/{metric_id}/backtest",
+    response_model=BacktestResult,
+    status_code=status.HTTP_201_CREATED,
+)
+async def backtest_metric(
+    metric_id: uuid.UUID,
+    body: BacktestRequest,
+    user_id: str = Depends(require_user_id),
+    project_id: uuid.UUID = Depends(require_project_id),
+    engine: AsyncEngine = Depends(get_engine),
+) -> BacktestResult:
+    """Runs `metric_id` over up to `sample_size` past completed calls'
+    already-recorded transcripts -- no new call is placed (app.engine.
+    metrics.backtest). Works on a metric of any status, not just `draft`:
+    re-backtesting an `active` metric after an edit is exactly how you'd
+    reactivate it once B2.7-04's version-bump-on-edit has moved it, and
+    nothing about this endpoint should require demoting it to draft first.
+    """
+    async with engine.connect() as conn:
+        metric_row = await _fetch_metric_or_404(conn, metric_id, project_id)
+        usage = UsageTracker()
+        # Only an llm_judge-kind metric ever needs a real judge client --
+        # building one unconditionally would mean every builtin/python
+        # backtest fails in any environment without GCP credentials
+        # configured for absolutely no reason (it never gets called).
+        judge = (
+            FinalJudge(build_judge_client(), usage=usage)
+            if metric_row["kind"] == "llm_judge"
+            else None
+        )
+        outcomes = await run_backtest(
+            conn,
+            judge,
+            metric_row,
+            project_id=project_id,
+            sample_size=body.sample_size,
+            filters=body.filters,
+        )
+
+    verdicts = [
+        BacktestCallVerdict(
+            run_id=str(run_id),
+            # not_sampled never comes back from a backtest (sampling is a
+            # live-scoring concept -- every historical call requested here
+            # is actually evaluated); defensively treated as an error
+            # rather than silently accepted by a schema that doesn't list it.
+            status=outcome.status if outcome.status != "not_sampled" else "error",
+            value=outcome.value if isinstance(outcome.value, str | float | bool) else None,
+            turn_refs=outcome.turn_refs,
+            rationale=outcome.rationale,
+        )
+        for run_id, outcome in outcomes
+    ]
+
+    backtest_id = uuid.uuid4()
+    async with engine.connect() as conn, conn.begin():
+        await conn.execute(
+            text(
+                "INSERT INTO metric_backtests "
+                "(id, metric_id, spec_hash, sample_size, filters, agreement, "
+                " labeled_count, cost, created_by_user_id) "
+                "VALUES (:id, :metric_id, :spec_hash, :sample_size, "
+                " CAST(:filters AS jsonb), NULL, 0, CAST(:cost AS jsonb), :user_id)"
+            ),
+            {
+                "id": backtest_id,
+                "metric_id": metric_id,
+                "spec_hash": spec_hash(metric_row["spec"]),
+                "sample_size": body.sample_size,
+                "filters": _dump_json(body.filters),
+                "cost": _dump_json(usage.as_dict()),
+                "user_id": user_id,
+            },
+        )
+
+    return BacktestResult(
+        id=str(backtest_id),
+        verdicts=verdicts,
+        agreement=None,
+        labeled_count=0,
+        cost=usage.as_dict(),
+    )
 
 
 @router.delete("/v1/metrics/{metric_id}", status_code=status.HTTP_204_NO_CONTENT)

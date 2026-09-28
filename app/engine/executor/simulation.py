@@ -47,11 +47,10 @@ from sqlalchemy import text
 from sqlalchemy.engine import RowMapping
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from app.config import get_settings
 from app.engine.caller.latency_clock import LatencyClock
 from app.engine.caller.persona import PersonaSpec, Turn
 from app.engine.caller.persona_call import CallEndReason, run_persona_call
-from app.engine.judge.judge import FinalJudge, GenAIClient, IncrementalJudge, build_vertex_client
+from app.engine.judge.judge import FinalJudge, IncrementalJudge, build_judge_client
 from app.engine.judge.models import AssertionSpec
 from app.engine.metrics.compiler import (
     MetricOutcome,
@@ -73,7 +72,6 @@ from app.events import (
     status_event,
     turn_event,
 )
-from app.gcp_auth import load_google_oauth2_credentials
 from app.observability.tracing import get_tracer
 from app.schemas.runs import TranscriptTurn
 from app.usage import UsageTracker
@@ -223,17 +221,6 @@ async def _resolve_run_metrics(engine: AsyncEngine, agent_id: uuid.UUID) -> list
             )
         ).scalar_one()
         return await resolve_metrics_for_agent(conn, project_id=project_id, agent_id=agent_id)
-
-
-def _build_judge_client() -> GenAIClient:
-    settings = get_settings()
-    credentials = load_google_oauth2_credentials()
-    client = build_vertex_client(
-        credentials=credentials,
-        project=settings.google_cloud_project,
-        location=settings.google_cloud_location,
-    )
-    return client  # type: ignore[return-value]
 
 
 async def _poll_for_cancellation(
@@ -417,7 +404,7 @@ async def _run_simulation_traced(
     try:
         try:
             usage = UsageTracker()
-            client = _build_judge_client()
+            client = build_judge_client()
         except Exception:
             logger.exception(f"failed to build judge client for run {run_id}")
             async with engine.connect() as conn, conn.begin():

@@ -47,6 +47,34 @@ class MetricUpdate(APIModel):
     status: Literal["draft", "active", "archived"] | None = None
 
 
+class BacktestRequest(APIModel):
+    sample_size: int = 40
+    # Currently supports agentId -- the ticket's own "filters" is loose by
+    # design (a dict, not a fixed schema) since the exact filter set is
+    # expected to grow; app.engine.metrics.backtest documents which keys
+    # it actually reads.
+    filters: dict[str, object] = {}
+
+
+class BacktestCallVerdict(APIModel):
+    run_id: str
+    status: Literal["passed", "failed", "warn", "error", "not_computable"]
+    value: str | float | bool | None = None
+    turn_refs: list[int] = []
+    rationale: str | None = None
+
+
+class BacktestResult(APIModel):
+    id: str
+    verdicts: list[BacktestCallVerdict]
+    # B2.7-10: null/0 until this codebase has a human-label store to
+    # compare against -- honest, not a stub value (see MetricBacktest's
+    # own docstring).
+    agreement: float | None = None
+    labeled_count: int = 0
+    cost: dict[str, object]
+
+
 class ResolvedMetric(APIModel):
     """The effective metric set for one scenario -- one row per unique
     `name`, already resolved through the agent > project > builtin

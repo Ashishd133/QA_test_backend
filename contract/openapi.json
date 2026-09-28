@@ -334,6 +334,127 @@
         "title": "AttackData",
         "type": "object"
       },
+      "BacktestCallVerdict": {
+        "properties": {
+          "rationale": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rationale"
+          },
+          "runId": {
+            "title": "Runid",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "passed",
+              "failed",
+              "warn",
+              "error",
+              "not_computable"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "turnRefs": {
+            "default": [],
+            "items": {
+              "type": "integer"
+            },
+            "title": "Turnrefs",
+            "type": "array"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value"
+          }
+        },
+        "required": [
+          "runId",
+          "status"
+        ],
+        "title": "BacktestCallVerdict",
+        "type": "object"
+      },
+      "BacktestRequest": {
+        "properties": {
+          "filters": {
+            "additionalProperties": true,
+            "default": {},
+            "title": "Filters",
+            "type": "object"
+          },
+          "sampleSize": {
+            "default": 40,
+            "title": "Samplesize",
+            "type": "integer"
+          }
+        },
+        "title": "BacktestRequest",
+        "type": "object"
+      },
+      "BacktestResult": {
+        "properties": {
+          "agreement": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agreement"
+          },
+          "cost": {
+            "additionalProperties": true,
+            "title": "Cost",
+            "type": "object"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "labeledCount": {
+            "default": 0,
+            "title": "Labeledcount",
+            "type": "integer"
+          },
+          "verdicts": {
+            "items": {
+              "$ref": "#/components/schemas/BacktestCallVerdict"
+            },
+            "title": "Verdicts",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "verdicts",
+          "cost"
+        ],
+        "title": "BacktestResult",
+        "type": "object"
+      },
       "ConnectedAgent": {
         "properties": {
           "id": {
@@ -3744,6 +3865,60 @@
           }
         },
         "summary": "Update Metric",
+        "tags": [
+          "metrics"
+        ]
+      }
+    },
+    "/v1/metrics/{metric_id}/backtest": {
+      "post": {
+        "description": "Runs `metric_id` over up to `sample_size` past completed calls'\nalready-recorded transcripts -- no new call is placed (app.engine.\nmetrics.backtest). Works on a metric of any status, not just `draft`:\nre-backtesting an `active` metric after an edit is exactly how you'd\nreactivate it once B2.7-04's version-bump-on-edit has moved it, and\nnothing about this endpoint should require demoting it to draft first.",
+        "operationId": "backtest_metric",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "metric_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Metric Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BacktestRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BacktestResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Backtest Metric",
         "tags": [
           "metrics"
         ]

@@ -1,7 +1,7 @@
 from app.models.agents import Agent
 from app.models.base import Base
 from app.models.discovery import DiscoveryDraft, DiscoveryEdge, DiscoveryIntent, DiscoveryNode
-from app.models.metrics import Metric, MetricResult, ScenarioMetric
+from app.models.metrics import Metric, MetricBacktest, MetricResult, ScenarioMetric
 from app.models.organizations import Organization, OrgMembership
 from app.models.personas import Persona
 from app.models.projects import Project
@@ -29,6 +29,7 @@ __all__ = [
     "DiscoveryIntent",
     "DiscoveryDraft",
     "Metric",
+    "MetricBacktest",
     "MetricResult",
     "ScenarioMetric",
     "TestProfile",

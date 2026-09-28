@@ -142,6 +142,33 @@ class MetricResult(Base, OrgScopedMixin):
     created_at: Mapped[datetime] = mapped_column(server_default=func.now(), nullable=False)
 
 
+class MetricBacktest(Base, OrgScopedMixin):
+    """B2.7-10: one row per backtest run. `spec_hash` binds this row to the
+    exact `spec` content tested -- a draft metric's edits don't bump
+    `version` (only PATCH-on-`active` does, B2.7-04), so hashing the spec
+    is what stops "backtest spec A, silently activate spec B": PATCH
+    status=active on a metric hashes its *current* spec and checks for a
+    matching backtest row, not just "any backtest row exists at all"."""
+
+    __tablename__ = "metric_backtests"
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    metric_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("metrics.id", ondelete="CASCADE"), nullable=False
+    )
+    spec_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    sample_size: Mapped[int] = mapped_column(Integer, nullable=False)
+    filters: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False, server_default="{}")
+    # B2.7-10: no human-label storage exists anywhere in this codebase yet
+    # (checked) -- agreement/labeled_count stay NULL/0 until one does; this
+    # is the honest "nothing to compare against" state, not a stub value.
+    agreement: Mapped[float | None] = mapped_column(nullable=True)
+    labeled_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    cost: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False, server_default="{}")
+    created_by_user_id: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now(), nullable=False)
+
+
 class ScenarioMetric(Base):
     """Join table: which metrics apply to a scenario, and whether each one
     gates the run's pass/fail verdict (B2.7-08) or is informational only.
