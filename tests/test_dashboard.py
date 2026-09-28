@@ -14,13 +14,16 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from app.config import get_settings
 from app.main import app
-from tests.conftest import _test_engine, requires_test_db
+from tests.conftest import _test_engine, auth_headers, requires_test_db
 
 pytestmark = requires_test_db
 
-_HEADERS = {"Authorization": f"Bearer {get_settings().python_service_token}"}
+# GET /v1/metrics/dashboard is unscoped (no project_id dependency at all --
+# see app/api/dashboard.py), but GET /v1/personas requires X-Project-Id via
+# require_project_id (B2.5-01), so this file needs the full header set, not
+# just Authorization.
+_HEADERS = auth_headers()
 
 
 async def _client() -> AsyncClient:
