@@ -10,6 +10,8 @@ a scenario's most recent run, not the DB's raw execution-lifecycle
 runs.status enum ('queued'|'claimed'|...); see app/api/suites.py.
 """
 
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic.alias_generators import to_camel
 
@@ -160,3 +162,39 @@ class SuiteRunCreate(APIModel):
 class SuiteRunCreateResponse(APIModel):
     parent_run_id: str
     call_count: int
+
+
+class ScenarioGenerateRequest(APIModel):
+    """B2.7-12. `discoveryRunId` is required exactly when
+    `source='discovery_run'` -- rejected otherwise so a caller can't pass
+    one that silently gets ignored, or omit one that silently gets treated
+    as "no context"."""
+
+    source: Literal["agent_prompt", "agent_description", "discovery_run"]
+    discovery_run_id: str | None = None
+    count: int = 8
+
+    @model_validator(mode="after")
+    def _check_shape(self) -> "ScenarioGenerateRequest":
+        if not (1 <= self.count <= 20):
+            raise ValueError("count must be between 1 and 20")
+        has_id = self.discovery_run_id is not None
+        if (self.source == "discovery_run") != has_id:
+            raise ValueError("discoveryRunId is required if and only if source is discovery_run")
+        return self
+
+
+class GeneratedDraftSummary(APIModel):
+    draft_id: str
+    name: str
+    kind: Literal["positive", "negative"]
+    persona: str
+    persona_id: str | None = None
+    goal: str
+    assertions: list[object]
+    metric_names: list[str] = Field(default_factory=list)
+
+
+class ScenarioGenerateResponse(APIModel):
+    drafts: list[GeneratedDraftSummary]
+    cost: dict[str, object]

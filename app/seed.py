@@ -34,6 +34,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 from app.db import get_engine
 from app.engine.caller.persona_call import CARD_BLOCK_PERSONA
 from app.engine.metrics.builtins import BUILTIN_METRICS
+from app.engine.reference_agent.agent import BANKER_INSTRUCTIONS_TEMPLATE, GREETER_INSTRUCTIONS
 from app.workers.claim import ClaimedRun
 from app.workers.fake_runner import run_fake_script
 from evals.assertions import A1_REQUESTS_VERIFICATION, A2_CONFIRMS_NEXT_STEPS
@@ -70,6 +71,24 @@ _AGENTS: list[dict[str, Any]] = [
         "name": "Reference Agent",
         "transport": "web",
         "max_concurrency": 1,
+        # B2.7-12: verbatim reuse of the reference agent's own instructions
+        # (app.engine.reference_agent.agent), same convention as
+        # CARD_BLOCK_PERSONA elsewhere in this file -- generation needs
+        # real prompt text to generate real drafts from, and this is the
+        # one agent that actually has any.
+        "prompt": (
+            GREETER_INSTRUCTIONS
+            + "\n\n"
+            + BANKER_INSTRUCTIONS_TEMPLATE.format(first_name="the caller")
+        ),
+        "description": (
+            "Cadence Bank's phone support agent. Verifies caller identity "
+            "(full name, date of birth, security phrase) before discussing "
+            "any account. Once verified, can check account balance, block a "
+            "lost or stolen card, share branch hours/location, look up "
+            "another customer's masked summary on request, or hand off to a "
+            "human specialist."
+        ),
     },
 ]
 
@@ -225,15 +244,28 @@ async def _seed_agents(conn: AsyncConnection) -> dict[str, uuid.UUID]:
         ids[a["key"]] = agent_id
         await conn.execute(
             text(
-                "INSERT INTO agents (id, name, transport, max_concurrency, created_by_user_id) "
-                "VALUES (:id, :name, :transport, :max_concurrency, :user_id) "
-                "ON CONFLICT (id) DO NOTHING"
+                "INSERT INTO agents "
+                "(id, name, transport, max_concurrency, prompt, description, "
+                " created_by_user_id) "
+                "VALUES (:id, :name, :transport, :max_concurrency, :prompt, :description, "
+                " :user_id) "
+                # B2.7-12: prompt/description are new columns on a row this
+                # seed script already created in every environment run
+                # before this ticket -- ON CONFLICT DO NOTHING alone would
+                # silently never backfill them onto an existing row.
+                # Updating just these two (not name/transport/etc, which a
+                # real user could have since edited) keeps a re-run
+                # idempotent with this file's own constants.
+                "ON CONFLICT (id) DO UPDATE SET "
+                "prompt = EXCLUDED.prompt, description = EXCLUDED.description"
             ),
             {
                 "id": agent_id,
                 "name": a["name"],
                 "transport": a["transport"],
                 "max_concurrency": a["max_concurrency"],
+                "prompt": a.get("prompt"),
+                "description": a.get("description"),
                 "user_id": _SEED_USER_ID,
             },
         )

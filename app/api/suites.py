@@ -1,6 +1,6 @@
 import json
 import uuid
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -14,11 +14,17 @@ from app.config import get_settings
 from app.crypto import decrypt_json, encrypt_json
 from app.db import get_engine
 from app.deps import ensure_project_match, require_project_id, require_user_id
+from app.engine.generation.generator import generate_drafts
+from app.engine.judge.judge import GenAIClient, build_judge_client
+from app.engine.metrics.resolver import resolve_metrics_for_agent
 from app.errors import APIError
 from app.formatting import relative_time
 from app.schemas.suites import (
+    GeneratedDraftSummary,
     ScenarioCreateRequest,
     ScenarioDuplicateRequest,
+    ScenarioGenerateRequest,
+    ScenarioGenerateResponse,
     ScenarioMetricAttachment,
     ScenarioSummary,
     ScenarioUpdate,
@@ -30,9 +36,27 @@ from app.schemas.suites import (
     SuiteRunCreateResponse,
     SuiteUpdate,
 )
+from app.usage import UsageTracker
 from app.verdict import Verdict, format_score, verdict_for_run
 
 router = APIRouter(tags=["suites"])
+
+
+def get_generation_client_factory() -> Callable[[], GenAIClient]:
+    """Returns a *factory*, not a built client. FastAPI's solve_dependencies
+    calls every Depends() for a request in one pass, including this one,
+    regardless of whether a sibling parameter (like the request body) ends
+    up failing validation -- confirmed empirically: an out-of-range `count`
+    still reached this function before the 422 was raised. Eagerly calling
+    `build_judge_client()` here (real GCP credential loading) crashed that
+    case with a raw KeyError instead of a clean 422 in any environment
+    without credentials configured -- the exact class of bug B2.7-10
+    shipped once already. Returning the uncalled factory instead defers
+    real construction to generate_scenarios's own body, which only runs
+    once FastAPI has confirmed the body actually validated. Tests override
+    this dependency with a fake factory (`lambda: fake_client`), same
+    testability B2.7-10's `build_judge_client` also gives directly."""
+    return build_judge_client
 
 
 @dataclass
@@ -688,6 +712,230 @@ async def _sync_scenario_metrics(
         )
 
 
+_AGENT_FOR_GENERATION_SQL = text(
+    "SELECT id, project_id, prompt, description FROM agents WHERE id = :id"
+)
+
+_DISCOVERY_RUN_SQL = text("SELECT id, project_id, type, status FROM runs WHERE id = :id")
+
+_DISCOVERY_INTENTS_SQL = text(
+    "SELECT name, path, state, reason FROM discovery_intents WHERE run_id = :run_id"
+)
+
+_VISIBLE_PERSONAS_FOR_GENERATION_SQL = text(
+    "SELECT id, name FROM personas "
+    "WHERE project_id IS NULL OR project_id = :project_id "
+    "ORDER BY builtin DESC, name"
+)
+
+
+async def _generation_context(
+    conn: AsyncConnection,
+    *,
+    body: ScenarioGenerateRequest,
+    agent_row: RowMapping,
+    project_id: uuid.UUID,
+) -> tuple[str, str, uuid.UUID | None]:
+    """Returns (source_label, context_text, run_id_to_store)."""
+    if body.source == "agent_prompt":
+        if not agent_row["prompt"]:
+            raise APIError(
+                "validation_error",
+                "this agent has no prompt authored yet -- add one before generating from it",
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+            )
+        return "voice agent's system prompt", agent_row["prompt"], None
+
+    if body.source == "agent_description":
+        if not agent_row["description"]:
+            raise APIError(
+                "validation_error",
+                "this agent has no description authored yet -- add one before generating from it",
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+            )
+        return "voice agent's description", agent_row["description"], None
+
+    assert body.discovery_run_id is not None  # enforced by the request schema
+    run_id = _parse_uuid(body.discovery_run_id, "discoveryRunId")
+    run_row = (await conn.execute(_DISCOVERY_RUN_SQL, {"id": run_id})).mappings().first()
+    if run_row is None or uuid.UUID(str(run_row["project_id"])) != project_id:
+        raise APIError("not_found", "discovery run not found", status.HTTP_404_NOT_FOUND)
+    if run_row["type"] != "discovery" or run_row["status"] != "completed":
+        raise APIError(
+            "validation_error",
+            "discoveryRunId must name a completed discovery run",
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+        )
+    intents = (await conn.execute(_DISCOVERY_INTENTS_SQL, {"run_id": run_id})).mappings().all()
+    lines = [
+        f"- {i['name']} ({i['path']}): {i['state']}" + (f" -- {i['reason']}" if i["reason"] else "")
+        for i in intents
+    ]
+    context_text = "\n".join(lines) if lines else "(no intents recorded for this discovery run)"
+    return "completed discovery run's explored intents", context_text, run_id
+
+
+@router.post(
+    "/v1/suites/{suite_id}/scenarios:generate",
+    response_model=ScenarioGenerateResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def generate_scenarios(
+    suite_id: uuid.UUID,
+    body: ScenarioGenerateRequest,
+    user_id: str = Depends(require_user_id),
+    project_id: uuid.UUID = Depends(require_project_id),
+    engine: AsyncEngine = Depends(get_engine),
+    client_factory: Callable[[], GenAIClient] = Depends(get_generation_client_factory),
+) -> ScenarioGenerateResponse:
+    """B2.7-12. Writes `discovery_drafts` rows only -- acceptance goes
+    through `add_scenario`'s existing `fromDraftId` path (idempotent via
+    `source_draft_ref` UNIQUE), reusing tested machinery rather than a
+    second accept path."""
+    async with engine.connect() as conn:
+        suite_row = (
+            (
+                await conn.execute(
+                    text("SELECT project_id, agent_id FROM suites WHERE id = :id"), {"id": suite_id}
+                )
+            )
+            .mappings()
+            .first()
+        )
+        if suite_row is None:
+            raise APIError("not_found", "suite not found", status.HTTP_404_NOT_FOUND)
+        ensure_project_match(suite_row["project_id"], project_id)
+        agent_id = uuid.UUID(str(suite_row["agent_id"]))
+
+        agent_row = (
+            (await conn.execute(_AGENT_FOR_GENERATION_SQL, {"id": agent_id})).mappings().first()
+        )
+        assert agent_row is not None  # suites.agent_id is NOT NULL + FK
+
+        source_label, context_text, run_id = await _generation_context(
+            conn, body=body, agent_row=agent_row, project_id=project_id
+        )
+
+        persona_rows = (
+            (await conn.execute(_VISIBLE_PERSONAS_FOR_GENERATION_SQL, {"project_id": project_id}))
+            .mappings()
+            .all()
+        )
+        if not persona_rows:
+            raise APIError(
+                "validation_error",
+                "no personas are visible to this project -- create one before generating",
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+            )
+        metric_rows = await resolve_metrics_for_agent(
+            conn, project_id=project_id, agent_id=agent_id
+        )
+
+    persona_by_name = {str(p["name"]).lower(): p for p in persona_rows}
+    metric_by_name = {str(m["name"]).lower(): m for m in metric_rows}
+    fallback_persona = persona_rows[0]
+
+    # Real credential loading happens here, not in the Depends() above --
+    # see get_generation_client_factory's docstring for why.
+    client = client_factory()
+    usage = UsageTracker()
+    result = await generate_drafts(
+        client,
+        source_label=source_label,
+        context_text=context_text,
+        persona_names=[p["name"] for p in persona_rows],
+        metric_names=[m["name"] for m in metric_rows],
+        count=body.count,
+        usage=usage,
+    )
+    # Enforce the negative/refusal case rather than trust the model to
+    # have honored the instruction -- retry once, then fail loudly (never
+    # silently ship a batch missing the case that matters most).
+    if not any(d.kind == "negative" for d in result.drafts):
+        result = await generate_drafts(
+            client,
+            source_label=source_label,
+            context_text=context_text,
+            persona_names=[p["name"] for p in persona_rows],
+            metric_names=[m["name"] for m in metric_rows],
+            count=body.count,
+            usage=usage,
+        )
+        if not any(d.kind == "negative" for d in result.drafts):
+            raise APIError(
+                "generation_failed",
+                "generation did not produce a negative/refusal case after a retry",
+                status.HTTP_502_BAD_GATEWAY,
+            )
+
+    drafts_out: list[GeneratedDraftSummary] = []
+    async with engine.connect() as conn, conn.begin():
+        for draft in result.drafts:
+            persona_row = persona_by_name.get(draft.persona_name.lower(), fallback_persona)
+            metric_ids = [
+                str(metric_by_name[name.lower()]["id"])
+                for name in draft.metric_names
+                if name.lower() in metric_by_name
+            ]
+            seen_ids: set[str] = set()
+            assertions: list[object] = []
+            for a in draft.assertions:
+                if a.id in seen_ids:
+                    continue
+                seen_ids.add(a.id)
+                assertions.append(
+                    {
+                        "id": a.id,
+                        "name": a.name,
+                        "description": a.description,
+                        "distinguishFrom": a.distinguish_from,
+                    }
+                )
+
+            draft_id = str(uuid.uuid4())
+            script = {"goal": draft.caller_goal, "openingLine": draft.opening_line}
+            proposed_metrics = [{"metricId": mid} for mid in metric_ids]
+            await conn.execute(
+                text(
+                    "INSERT INTO discovery_drafts "
+                    "(draft_id, run_id, suite_id, source, name, persona, persona_id, goal, "
+                    " script, assertions, proposed_metrics) "
+                    "VALUES (:draft_id, :run_id, :suite_id, :source, :name, :persona, "
+                    " :persona_id, :goal, CAST(:script AS jsonb), CAST(:assertions AS jsonb), "
+                    " CAST(:proposed_metrics AS jsonb))"
+                ),
+                {
+                    "draft_id": draft_id,
+                    "run_id": run_id,
+                    "suite_id": suite_id,
+                    "source": body.source,
+                    "name": draft.name,
+                    "persona": draft.persona_name,
+                    "persona_id": persona_row["id"],
+                    "goal": draft.scenario_goal,
+                    "script": _dump_json(script),
+                    "assertions": _dump_json(assertions),
+                    "proposed_metrics": _dump_json(proposed_metrics),
+                },
+            )
+            drafts_out.append(
+                GeneratedDraftSummary(
+                    draft_id=draft_id,
+                    name=draft.name,
+                    kind=draft.kind,
+                    persona=str(persona_row["name"]),
+                    persona_id=str(persona_row["id"]),
+                    goal=draft.scenario_goal,
+                    assertions=assertions,
+                    metric_names=[
+                        name for name in draft.metric_names if name.lower() in metric_by_name
+                    ],
+                )
+            )
+
+    return ScenarioGenerateResponse(drafts=drafts_out, cost=usage.as_dict())
+
+
 @router.post(
     "/v1/suites/{suite_id}/scenarios",
     response_model=ScenarioSummary,
@@ -735,16 +983,19 @@ async def add_scenario(
                 response.status_code = status.HTTP_200_OK
                 return _scenario_summary(existing, None, _assert_count(existing["assertions"]))
 
-            # B5 hasn't landed yet (discovery_drafts.draft_id is only unique
-            # per-run, per spine §3's composite PK) -- this lookup assumes
-            # draft_id is effectively globally addressable, which only holds
-            # once B5's explorer generates non-colliding draft ids.
+            # draft_id alone is the PK as of B2.7-12 (migration 017) -- this
+            # lookup no longer needs a run_id to scope by; project scoping
+            # instead comes from the draft's suite (joined below), so a
+            # draft can't be accepted into a different project than the one
+            # that generated it.
             draft = (
                 (
                     await conn.execute(
                         text(
-                            "SELECT name, persona, assertions FROM discovery_drafts "
-                            "WHERE draft_id = :draft_id LIMIT 1"
+                            "SELECT dd.name, dd.persona, dd.persona_id, dd.goal, dd.script, "
+                            "       dd.assertions, dd.proposed_metrics, s.project_id "
+                            "FROM discovery_drafts dd JOIN suites s ON s.id = dd.suite_id "
+                            "WHERE dd.draft_id = :draft_id"
                         ),
                         {"draft_id": body.from_draft_id},
                     )
@@ -752,23 +1003,42 @@ async def add_scenario(
                 .mappings()
                 .first()
             )
-            if draft is None:
+            if draft is None or uuid.UUID(str(draft["project_id"])) != project_id:
                 raise APIError("not_found", "draft not found", status.HTTP_404_NOT_FOUND)
             name, assertions = draft["name"], draft["assertions"]
             source, source_draft_ref = "discovery_draft", body.from_draft_id
-            script = None
-            persona_id, persona_name = await _resolve_persona(
-                conn, project_id, body.persona_id, draft["persona"]
-            )
+            # Body fields take precedence over the draft's own proposal --
+            # a draft is a suggestion, and a caller editing it before
+            # accepting shouldn't have those edits silently overwritten.
+            script = body.script if body.script is not None else draft["script"]
+            goal = body.goal if body.goal is not None else draft["goal"]
+            if body.persona_id is not None:
+                persona_id, persona_name = await _resolve_persona(
+                    conn, project_id, body.persona_id, None
+                )
+            elif draft["persona_id"] is not None:
+                persona_id, persona_name = await _resolve_persona(
+                    conn, project_id, str(draft["persona_id"]), None
+                )
+            else:
+                persona_id, persona_name = await _resolve_persona(
+                    conn, project_id, None, draft["persona"]
+                )
+            metrics_to_attach = body.metrics or [
+                ScenarioMetricAttachment(metric_id=m["metricId"])
+                for m in (draft["proposed_metrics"] or [])
+            ]
         else:
             assert body.name is not None
             assert body.persona_id is not None
             name, assertions = body.name, body.assertions
             source, source_draft_ref = "manual", None
             script = body.script
+            goal = body.goal
             persona_id, persona_name = await _resolve_persona(
                 conn, project_id, body.persona_id, None
             )
+            metrics_to_attach = body.metrics
 
         row = (
             (
@@ -777,7 +1047,7 @@ async def add_scenario(
                         "INSERT INTO scenarios "
                         "(id, suite_id, name, persona_id, script, assertions, goal, "
                         " test_profile_id, conditions, source, source_draft_ref) "
-                        "VALUES (:id, :suite_id, :name, :persona_id, :script, "
+                        "VALUES (:id, :suite_id, :name, :persona_id, CAST(:script AS jsonb), "
                         " CAST(:assertions AS jsonb), :goal, :test_profile_id, "
                         " CAST(:conditions AS jsonb), :source, :source_draft_ref) "
                         "RETURNING id, suite_id, name, assertions"
@@ -787,9 +1057,9 @@ async def add_scenario(
                         "suite_id": suite_id,
                         "name": name,
                         "persona_id": persona_id,
-                        "script": script,
+                        "script": json.dumps(script) if script is not None else None,
                         "assertions": json.dumps(assertions),
-                        "goal": body.goal,
+                        "goal": goal,
                         "test_profile_id": (
                             _parse_uuid(body.test_profile_id, "testProfileId")
                             if body.test_profile_id
@@ -806,8 +1076,18 @@ async def add_scenario(
             .mappings()
             .one()
         )
-        if body.metrics:
-            await _sync_scenario_metrics(conn, uuid.UUID(str(row["id"])), project_id, body.metrics)
+        if metrics_to_attach:
+            await _sync_scenario_metrics(
+                conn, uuid.UUID(str(row["id"])), project_id, metrics_to_attach
+            )
+        if source == "discovery_draft":
+            await conn.execute(
+                text(
+                    "UPDATE discovery_drafts SET added_scenario_id = :scenario_id "
+                    "WHERE draft_id = :draft_id"
+                ),
+                {"scenario_id": row["id"], "draft_id": source_draft_ref},
+            )
     result_row = {**row, "persona_id": persona_id, "persona_name": persona_name}
     return _scenario_summary(result_row, None, _assert_count(row["assertions"]))
 

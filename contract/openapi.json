@@ -25,6 +25,17 @@
             ],
             "title": "Config"
           },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
           "language": {
             "anyOf": [
               {
@@ -44,6 +55,17 @@
           "name": {
             "title": "Name",
             "type": "string"
+          },
+          "prompt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prompt"
           }
         },
         "required": [
@@ -59,6 +81,17 @@
             "additionalProperties": true,
             "title": "Config",
             "type": "object"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
           },
           "id": {
             "title": "Id",
@@ -97,6 +130,17 @@
           "projectId": {
             "title": "Projectid",
             "type": "string"
+          },
+          "prompt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prompt"
           },
           "status": {
             "anyOf": [
@@ -194,6 +238,17 @@
             ],
             "title": "Config"
           },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
           "language": {
             "anyOf": [
               {
@@ -226,6 +281,17 @@
               }
             ],
             "title": "Name"
+          },
+          "prompt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prompt"
           }
         },
         "title": "AgentUpdate",
@@ -827,6 +893,67 @@
           "counts"
         ],
         "title": "ExposureData",
+        "type": "object"
+      },
+      "GeneratedDraftSummary": {
+        "properties": {
+          "assertions": {
+            "items": {},
+            "title": "Assertions",
+            "type": "array"
+          },
+          "draftId": {
+            "title": "Draftid",
+            "type": "string"
+          },
+          "goal": {
+            "title": "Goal",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "positive",
+              "negative"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "metricNames": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Metricnames",
+            "type": "array"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "persona": {
+            "title": "Persona",
+            "type": "string"
+          },
+          "personaId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Personaid"
+          }
+        },
+        "required": [
+          "draftId",
+          "name",
+          "kind",
+          "persona",
+          "goal",
+          "assertions"
+        ],
+        "title": "GeneratedDraftSummary",
         "type": "object"
       },
       "HTTPValidationError": {
@@ -2498,6 +2625,63 @@
           "targetSuiteId"
         ],
         "title": "ScenarioDuplicateRequest",
+        "type": "object"
+      },
+      "ScenarioGenerateRequest": {
+        "description": "B2.7-12. `discoveryRunId` is required exactly when\n`source='discovery_run'` -- rejected otherwise so a caller can't pass\none that silently gets ignored, or omit one that silently gets treated\nas \"no context\".",
+        "properties": {
+          "count": {
+            "default": 8,
+            "title": "Count",
+            "type": "integer"
+          },
+          "discoveryRunId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Discoveryrunid"
+          },
+          "source": {
+            "enum": [
+              "agent_prompt",
+              "agent_description",
+              "discovery_run"
+            ],
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source"
+        ],
+        "title": "ScenarioGenerateRequest",
+        "type": "object"
+      },
+      "ScenarioGenerateResponse": {
+        "properties": {
+          "cost": {
+            "additionalProperties": true,
+            "title": "Cost",
+            "type": "object"
+          },
+          "drafts": {
+            "items": {
+              "$ref": "#/components/schemas/GeneratedDraftSummary"
+            },
+            "title": "Drafts",
+            "type": "array"
+          }
+        },
+        "required": [
+          "drafts",
+          "cost"
+        ],
+        "title": "ScenarioGenerateResponse",
         "type": "object"
       },
       "ScenarioMetricAttachment": {
@@ -5580,6 +5764,60 @@
           }
         },
         "summary": "Add Scenario",
+        "tags": [
+          "suites"
+        ]
+      }
+    },
+    "/v1/suites/{suite_id}/scenarios:generate": {
+      "post": {
+        "description": "B2.7-12. Writes `discovery_drafts` rows only -- acceptance goes\nthrough `add_scenario`'s existing `fromDraftId` path (idempotent via\n`source_draft_ref` UNIQUE), reusing tested machinery rather than a\nsecond accept path.",
+        "operationId": "generate_scenarios",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "suite_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Suite Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScenarioGenerateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScenarioGenerateResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Generate Scenarios",
         "tags": [
           "suites"
         ]

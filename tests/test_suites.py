@@ -348,10 +348,11 @@ async def test_add_scenario_from_draft_is_idempotent() -> None:
         )
         await conn.execute(
             text(
-                "INSERT INTO discovery_drafts (run_id, draft_id, name, persona) "
-                "VALUES (:run_id, :draft_id, 'Drafted Scenario', 'Skeptical Caller')"
+                "INSERT INTO discovery_drafts (run_id, draft_id, suite_id, source, name, persona) "
+                "VALUES (:run_id, :draft_id, :suite_id, 'discovery_run', "
+                " 'Drafted Scenario', 'Skeptical Caller')"
             ),
-            {"run_id": run_id, "draft_id": draft_id},
+            {"run_id": run_id, "draft_id": draft_id, "suite_id": suite_id},
         )
 
     persona_id = await builtin_persona_id(engine)

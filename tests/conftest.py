@@ -77,7 +77,7 @@ async def builtin_persona_id(engine: AsyncEngine) -> uuid.UUID:
             await conn.execute(text("SELECT id FROM personas WHERE builtin = true LIMIT 1"))
         ).first()
     assert row is not None, "no builtin persona seeded -- run `uv run python -m app.seed` first"
-    return row[0]
+    return uuid.UUID(str(row[0]))
 
 
 def _test_engine() -> AsyncEngine:

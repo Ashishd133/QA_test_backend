@@ -30,3 +30,11 @@ class Agent(Base, OrgScopedMixin, TimestampMixin):
     status: Mapped[str | None] = mapped_column(Text, nullable=True)
     last_seen_at: Mapped[datetime | None] = mapped_column(nullable=True)
     created_by_user_id: Mapped[str] = mapped_column(Text, nullable=False)
+    # B2.7-12: two distinct generation sources per W2.7-07's source picker --
+    # `prompt` is the agent's actual system instructions/script (what it's
+    # literally told), `description` a shorter human summary of what it
+    # does. Both nullable: generation from either 422s cleanly when the
+    # field a caller asked to generate from hasn't been authored yet,
+    # rather than generating from empty/misleading content.
+    prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)

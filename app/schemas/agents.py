@@ -70,6 +70,13 @@ class AgentDetail(APIModel):
     max_concurrency: int
     status: str | None = None
     last_seen_at: str | None = None
+    # B2.7-12: the two distinct scenario-generation sources (W2.7-07's
+    # source picker) -- `prompt` the agent's actual system instructions,
+    # `description` a shorter human summary. Both optional; generating
+    # from whichever one is empty 422s rather than generating from
+    # nothing.
+    prompt: str | None = None
+    description: str | None = None
 
 
 class AgentCreate(APIModel):
@@ -77,6 +84,8 @@ class AgentCreate(APIModel):
     config: AgentConfig
     language: str | None = None
     max_concurrency: int = 1
+    prompt: str | None = None
+    description: str | None = None
 
 
 class AgentUpdate(APIModel):
@@ -84,6 +93,8 @@ class AgentUpdate(APIModel):
     config: AgentConfig | None = None
     language: str | None = None
     max_concurrency: int | None = None
+    prompt: str | None = None
+    description: str | None = None
 
 
 class TestConnectionResult(APIModel):

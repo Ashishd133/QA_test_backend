@@ -107,11 +107,14 @@ def _agent_detail(row: RowMapping) -> AgentDetail:
         max_concurrency=row["max_concurrency"],
         status=row["status"],
         last_seen_at=row["last_seen_at"].isoformat() if row["last_seen_at"] else None,
+        prompt=row["prompt"],
+        description=row["description"],
     )
 
 
 _AGENT_COLUMNS = (
-    "id, project_id, name, transport, config, language, max_concurrency, status, last_seen_at"
+    "id, project_id, name, transport, config, language, max_concurrency, status, last_seen_at, "
+    "prompt, description"
 )
 
 
@@ -174,9 +177,9 @@ async def create_agent(
                     text(
                         "INSERT INTO agents "
                         "(id, project_id, name, transport, config, language, max_concurrency, "
-                        " created_by_user_id) "
+                        " prompt, description, created_by_user_id) "
                         "VALUES (:id, :project_id, :name, :transport, CAST(:config AS jsonb), "
-                        " :language, :max_concurrency, :user_id) "
+                        " :language, :max_concurrency, :prompt, :description, :user_id) "
                         f"RETURNING {_AGENT_COLUMNS}"
                     ),
                     {
@@ -187,6 +190,8 @@ async def create_agent(
                         "config": _dump_json(config_dict),
                         "language": body.language,
                         "max_concurrency": body.max_concurrency,
+                        "prompt": body.prompt,
+                        "description": body.description,
                         "user_id": user_id,
                     },
                 )
@@ -248,6 +253,10 @@ async def update_agent(
     if body.config is not None:
         updates["transport"] = body.config.transport
         updates["config"] = _dump_json(body.config.model_dump(mode="json", by_alias=True))
+    if body.prompt is not None:
+        updates["prompt"] = body.prompt
+    if body.description is not None:
+        updates["description"] = body.description
 
     async with engine.connect() as conn, conn.begin():
         await _fetch_agent_or_404(conn, agent_id, project_id)

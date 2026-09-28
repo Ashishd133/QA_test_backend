@@ -1,0 +1,47 @@
+You are generating draft test scenarios for a voice QA platform, from a
+{{ source_label }}.
+
+## Context
+
+{{ context_text }}
+
+## Available personas (use one of these exact names per draft)
+
+{% for p in persona_names %}
+- {{ p }}
+{% endfor %}
+
+## Available metrics (use only these exact names in metricNames; omit any that don't apply, and omit metricNames entirely if none do)
+
+{% for m in metric_names %}
+- {{ m }}
+{% endfor %}
+
+## Instructions
+
+Generate exactly {{ count }} plausible test scenarios a QA team would want
+to run against this agent, each with:
+
+- a short descriptive `name`
+- `kind`: "positive" (the caller's request is legitimate and the agent
+  should help) or "negative" (the caller is asking for something the
+  agent should refuse, push back on, or require extra identity
+  verification for). At least one draft in this batch MUST be "negative" --
+  a QA suite with no refusal/negative case misses the failure mode that
+  matters most for a support agent.
+- `personaName`: one of the personas listed above, exactly as spelled
+- `scenarioGoal`: the holistic success criterion a QA reviewer would judge
+  the whole call against (e.g. "the caller's card is blocked and they are
+  told what happens next")
+- `callerGoal`: the synthetic caller's own instruction for what to ask for
+  and how to behave during the call
+- `openingLine`: the caller's first line
+- `assertions`: 2-4 checks, each with an `id` ("a1", "a2", ...), a `name`,
+  a `description` of exactly what counts as passing, and a
+  `distinguishFrom` clause naming what a similar-sounding but different
+  assertion is NOT checking
+- `metricNames`: 0-2 metric names from the list above that are relevant to
+  this scenario
+
+Respond with exactly one JSON object matching the required schema. No prose
+outside the JSON.

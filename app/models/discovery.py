@@ -4,7 +4,7 @@ from sqlalchemy import CheckConstraint, Float, ForeignKey, ForeignKeyConstraint,
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.models.base import Base, OrgScopedMixin
+from app.models.base import Base, OrgScopedMixin, TimestampMixin
 
 
 class DiscoveryNode(Base, OrgScopedMixin):
@@ -62,16 +62,48 @@ class DiscoveryIntent(Base, OrgScopedMixin):
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
-class DiscoveryDraft(Base, OrgScopedMixin):
-    __tablename__ = "discovery_drafts"
+class DiscoveryDraft(Base, OrgScopedMixin, TimestampMixin):
+    """B2.7-12: draft_id alone is the PK now (B1-01's from-draft acceptance
+    already assumed it was globally addressable -- this makes that true
+    rather than documenting the gap). `run_id` is nullable because a
+    `source='agent_prompt'`/`'agent_description'` draft has no discovery
+    run behind it; only `source='discovery_run'` populates it. `suite_id`
+    replaces run_id as what scopes a draft to a project (via its suite),
+    matching how a real scenario scopes (B2.5-01's comment on
+    `_fetch_scenario_project_or_404`)."""
 
-    run_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("runs.id"), primary_key=True)
-    draft_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    __tablename__ = "discovery_drafts"
+    __table_args__ = (
+        CheckConstraint(
+            "source IN ('agent_prompt', 'agent_description', 'discovery_run')",
+            name="source_valid",
+        ),
+    )
+
+    draft_id: Mapped[str] = mapped_column(Text, primary_key=True, default=lambda: str(uuid.uuid4()))
+    run_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("runs.id"), nullable=True)
+    suite_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("suites.id", ondelete="CASCADE"), nullable=False
+    )
+    source: Mapped[str] = mapped_column(Text, nullable=False)
     name: Mapped[str] = mapped_column(Text, nullable=False)
+    # Free-text persona suggestion from the LLM -- app.api.suites._resolve_
+    # persona name-matches this against visible personas at accept time
+    # (same as a discovery-sourced draft always has); persona_id is the
+    # already-resolved id generation itself found a match for, so accept
+    # doesn't have to re-resolve when it's present.
     persona: Mapped[str] = mapped_column(Text, nullable=False)
+    persona_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("personas.id"), nullable=True)
+    goal: Mapped[str | None] = mapped_column(Text, nullable=True)
+    script: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)
     assertions: Mapped[dict[str, object]] = mapped_column(
         JSONB, nullable=False, server_default="[]"
     )
+    # [{"metricId": str}, ...] -- resolved metric ids only (unresolvable
+    # names are dropped at generation time, never stored unresolvable).
+    proposed_metrics: Mapped[dict[str, object]] = mapped_column(
+        JSONB, nullable=False, server_default="[]"
+    )
     added_scenario_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("scenarios.id"), nullable=True
+        ForeignKey("scenarios.id", ondelete="SET NULL"), nullable=True
     )
