@@ -3,6 +3,17 @@
   "description": "Real recording (B2-04, /tmp/persona_call2.log): identity verifies cleanly, card blocked, replacement confirmed.",
   "assertion_ids": ["a1", "a2"],
   "expected": {"a1": "passed", "a2": "passed"},
+  "goal": "The caller's lost card is blocked, and they are told what happens next (e.g. a replacement).",
+  "expected_goal_met": true,
+  "metric_ids": ["expected_outcome", "interruption_recovery", "language_match", "hallucination", "relevancy", "response_consistency"],
+  "expected_metrics": {
+    "expected_outcome": "passed",
+    "interruption_recovery": "passed",
+    "language_match": "passed",
+    "hallucination": "passed",
+    "relevancy": "passed",
+    "response_consistency": "passed"
+  },
   "transcript": [
     {"role": "caller", "text": "Hi, I think I've lost my debit card and I need it blocked right away."},
     {"role": "agent", "text": "Hello. Thank you for calling Cadence Bank before I can help you with your"},

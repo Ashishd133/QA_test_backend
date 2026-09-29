@@ -1,14 +1,28 @@
-"""B2-07: golden eval harness. Runs FinalJudge for real (Vertex, temperature
-0) against every case in evals/cases/*.json and checks it against the hand
-label.
+"""B2-07/B2.7-13: golden eval harness. Runs FinalJudge for real (Vertex,
+temperature 0) against every case in evals/cases/*.json and checks it
+against the hand label.
 
-Two separate bars, per the ticket:
-  - >=90% agreement across ALL (transcript, assertion) pairs -- the
-    aggregate accuracy gate.
-  - ZERO false "passed" on any pair hand-labeled "failed" -- unconditional,
-    not folded into the 90%. A judge that rubber-stamps everything as
-    passing can still clear 90% agreement if most cases are genuinely
-    clean; this is the check that catches that failure mode specifically.
+Three tiers, each hand-labeled independently (B2.7-09's separation --
+a case's assertions, goal, and metrics are graded as three distinct sets of
+pairs, never inferred from one another):
+  - assertions (a1/a2/a3, per case)
+  - goal_met (only for cases carrying a `goal`)
+  - llm_judge-kind builtin metrics (only for cases carrying `metric_ids`)
+
+Two bars apply across the UNION of all three tiers' pairs, per the ticket:
+  - >=90% agreement -- the aggregate accuracy gate.
+  - ZERO false "passed" (or, for metrics, false "passed"/"warn") on any pair
+    hand-labeled "failed"/false -- unconditional, not folded into the 90%.
+    A judge that rubber-stamps everything as passing can still clear 90%
+    agreement if most cases are genuinely clean; this is the check that
+    catches that failure mode specifically. For goal_met this is the same
+    idea applied to a bool: a hand-labeled `expected_goal_met=False` case
+    that comes back `goal_met=True` is a false pass, unconditionally.
+    evals/cases/g_three_failed_verifications_auto_handoff.json's
+    `expected_goal_met=False` is exactly this check's reason to exist --
+    weakening final.jinja2's "do not infer goal_met=true just because
+    every signal passed" instruction would show up here as a false pass on
+    that case, failing the build.
 
 Real API calls: costs money, has network latency, and (temperature 0
 notwithstanding) isn't perfectly deterministic run to run -- excluded from
@@ -66,7 +80,9 @@ async def test_judge_agreement_and_zero_false_passed_on_failures() -> None:
     mismatches: list[str] = []
 
     for case in cases:
-        verdict = await judge.evaluate(case.assertions, case.transcript)
+        verdict = await judge.evaluate(
+            case.assertions, case.transcript, metrics=case.metrics or None, goal=case.goal
+        )
         actual = {a.assertion_id: a.status for a in verdict.assertions}
 
         for assertion_id, expected_status in case.expected.items():
@@ -76,10 +92,35 @@ async def test_judge_agreement_and_zero_false_passed_on_failures() -> None:
                 matched_pairs += 1
             else:
                 mismatches.append(
-                    f"{case.id}/{assertion_id}: expected={expected_status} actual={actual_status}"
+                    f"{case.id}/a:{assertion_id}: expected={expected_status} actual={actual_status}"
                 )
             if expected_status == "failed" and actual_status == "passed":
-                false_passed.append(f"{case.id}/{assertion_id}")
+                false_passed.append(f"{case.id}/a:{assertion_id}")
+
+        if case.expected_goal_met is not None:
+            total_pairs += 1
+            if verdict.goal_met == case.expected_goal_met:
+                matched_pairs += 1
+            else:
+                mismatches.append(
+                    f"{case.id}/goal: expected={case.expected_goal_met} actual={verdict.goal_met}"
+                )
+            if case.expected_goal_met is False and verdict.goal_met is True:
+                false_passed.append(f"{case.id}/goal")
+
+        actual_metrics = {m.metric_id: m.status for m in verdict.metrics}
+        for metric_id, expected_metric_status in case.expected_metrics.items():
+            total_pairs += 1
+            actual_metric_status = actual_metrics.get(metric_id)
+            if actual_metric_status == expected_metric_status:
+                matched_pairs += 1
+            else:
+                mismatches.append(
+                    f"{case.id}/m:{metric_id}: "
+                    f"expected={expected_metric_status} actual={actual_metric_status}"
+                )
+            if expected_metric_status == "failed" and actual_metric_status in ("passed", "warn"):
+                false_passed.append(f"{case.id}/m:{metric_id}")
 
     agreement = matched_pairs / total_pairs
     assert not false_passed, f"false 'passed' on hand-labeled failures: {false_passed}"

@@ -26,7 +26,15 @@ INCREMENTAL_PROMPT_VERSION = "incremental-v1"
 # goal) still produces byte-identical output to final-v1 (see
 # tests/test_metric_compilation.py's and tests/test_goal_evaluation.py's
 # snapshot tests).
-FINAL_PROMPT_VERSION = "final-v3"
+# B2.7-13: added an unconditional Instructions paragraph generalizing the
+# fix for evals/cases/g_three_failed_verifications_auto_handoff.json's a2
+# flakiness (a hand-labeled-failed case the judge sometimes scored
+# "passed") -- a handoff/escalation only satisfies an obligation if the
+# handoff itself is what was asked for, not a stand-in for an unresolved
+# original request. Unconditional, so this doesn't change the "no goal/
+# metrics -> byte-identical to final-v1" snapshot tests' own comparisons
+# (all variants still match each other), just the shared text they compare.
+FINAL_PROMPT_VERSION = "final-v4"
 
 _env = Environment(
     loader=FileSystemLoader(TEMPLATES_DIR),

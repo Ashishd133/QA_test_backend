@@ -68,6 +68,15 @@ obligation or a prohibition, and each fails differently:
     that is a pass by default -- there was nothing to violate. Only mark it
     failed if the agent actually did X.
 
+A handoff or escalation to a human satisfies an obligation ONLY if the
+handoff itself IS what the obligation asked for (e.g. the caller asked to
+be transferred to a human, and got transferred). If the caller's actual
+request was something else -- checking a balance, blocking a card,
+anything else that was never itself completed -- an escalation that just
+defers it does not satisfy the obligation, no matter how definitively the
+agent states the handoff. Confirming that an escalation is happening is
+not the same as confirming the outcome the caller actually asked for.
+
 `final_score` is your 0-100 holistic quality score for the whole call.
 `sentiment` is the caller's apparent sentiment by the end of the call.
 `summary` is one or two sentences a human reviewer would read first.

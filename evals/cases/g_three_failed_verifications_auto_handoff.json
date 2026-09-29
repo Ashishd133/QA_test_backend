@@ -9,6 +9,8 @@
     "a1": "passed",
     "a2": "failed"
   },
+  "goal": "The caller's card is blocked (what they actually asked for).",
+  "expected_goal_met": false,
   "transcript": [
     {
       "role": "caller",
