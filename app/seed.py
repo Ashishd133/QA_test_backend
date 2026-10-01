@@ -23,9 +23,12 @@ the other 6 scenarios use -- those were never meant to be executed for
 real, so B2-05's `AssertionSpec.description` gap never mattered for them.
 """
 
+import argparse
 import asyncio
 import json
+import random
 import uuid
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import text
@@ -426,11 +429,307 @@ async def seed(engine: AsyncEngine) -> None:
         await _seed_run(engine, run, agent_ids, scenario_ids)
 
 
+# --- B2.8-05: `--demo` dashboard-population data (~200 calls / ~20 batches
+# over 30 days), additive on top of the base `seed()` above, so W2.8-02's
+# low-n empty states still get to see a fresh project with none of this. ---
+
+_DEMO_AGENT: dict[str, Any] = {
+    "key": "agent:collections",
+    "name": "Collections Bot",
+    "transport": "web",
+    "max_concurrency": 2,
+}
+
+# No suite ever targets this agent -- deliberately: it never gets a real
+# or synthetic completed call, so app.api.agents.derive_agent_liveness
+# reports it "Offline"/"Never probed", giving the Agent Health card the
+# same real mixed-health texture the redesign mock shows (not just four
+# green dots), for free rather than by faking a status column.
+
+# suite:reference is excluded -- B2-08's own docstring: it's "the one
+# scenario a real executor can actually run", not synthetic filler.
+_DEMO_BATCH_SUITE_KEYS = ["suite:support", "suite:billing"]
+_DEMO_BATCH_COUNT = 20
+_DEMO_BATCH_SIZE_RANGE = (8, 12)  # ~20 * 10 avg =~ 200 calls
+_DEMO_WINDOW_DAYS = 30
+_DEMO_SEED = 20260930  # fixed PRNG seed -- reruns draw the identical sequence
+
+_DEMO_FINDING_CATEGORIES = ["pii_exfiltration", "prompt_injection"]
+
+
+def _demo_scenario_ids_by_suite() -> dict[str, list[uuid.UUID]]:
+    by_suite: dict[str, list[uuid.UUID]] = {}
+    for sc in _SCENARIOS:
+        by_suite.setdefault(sc["suite_key"], []).append(_id(sc["key"]))
+    return by_suite
+
+
+def _demo_batch_specs(rng: random.Random) -> list[tuple[str, int, int]]:
+    """(suite_key, days_ago, batch_size) for each of the ~20 synthetic
+    batches, spread roughly evenly across the trailing 30 days (with jitter,
+    not a rigid grid) so trend lines show real day-to-day variance rather
+    than a flat line -- the ticket's own "done when" bar."""
+    specs = []
+    for i in range(_DEMO_BATCH_COUNT):
+        suite_key = _DEMO_BATCH_SUITE_KEYS[i % len(_DEMO_BATCH_SUITE_KEYS)]
+        days_ago = min(
+            _DEMO_WINDOW_DAYS - 1,
+            int(i * _DEMO_WINDOW_DAYS / _DEMO_BATCH_COUNT) + rng.randint(0, 1),
+        )
+        batch_size = rng.randint(*_DEMO_BATCH_SIZE_RANGE)
+        specs.append((suite_key, days_ago, batch_size))
+    return specs
+
+
+def _demo_child_outcome(rng: random.Random) -> tuple[str, str | None]:
+    """Realistic pass/warn/fail/cancelled spread for one call: mostly pass,
+    a meaningful review/fail tail, a rare cancellation -- not a coin flip,
+    so pass-rate widgets show a believable ~80% rather than ~50%."""
+    r = rng.random()
+    if r < 0.78:
+        return "completed", "pass"
+    if r < 0.90:
+        return "completed", "warn"
+    if r < 0.97:
+        return "completed", "fail"
+    return "cancelled", None
+
+
+async def _seed_demo_agent(conn: AsyncConnection) -> uuid.UUID:
+    agent_id = _id(_DEMO_AGENT["key"])
+    await conn.execute(
+        text(
+            "INSERT INTO agents (id, name, transport, max_concurrency, created_by_user_id) "
+            "VALUES (:id, :name, :transport, :max_concurrency, :user_id) "
+            "ON CONFLICT (id) DO NOTHING"
+        ),
+        {
+            "id": agent_id,
+            "name": _DEMO_AGENT["name"],
+            "transport": _DEMO_AGENT["transport"],
+            "max_concurrency": _DEMO_AGENT["max_concurrency"],
+            "user_id": _SEED_USER_ID,
+        },
+    )
+    return agent_id
+
+
+async def _seed_demo_batch(
+    conn: AsyncConnection,
+    *,
+    index: int,
+    suite_key: str,
+    agent_id: uuid.UUID,
+    scenario_ids: list[uuid.UUID],
+    days_ago: int,
+    batch_size: int,
+    apply_rubric: bool,
+    rng: random.Random,
+    now: datetime,
+) -> list[uuid.UUID]:
+    """Inserts one synthetic parent + `batch_size` children directly via SQL
+    (not FakeRunner -- these rows are born "already completed", there's no
+    in-flight state for anything downstream to race with), fully
+    ON CONFLICT DO NOTHING so a second `--demo` run is a no-op. Returns the
+    child ids that landed 'completed', for `_seed_demo_findings` to pick
+    from."""
+    parent_id = _id(f"demo:batch:{index}")
+    batch_created_at = now - timedelta(days=days_ago, hours=rng.randint(0, 20))
+
+    # Insert the parent (metrics filled in below, once children's verdicts
+    # are known) before any child -- `runs.parent_run_id` is a real FK, and
+    # every child row below points at this id.
+    await conn.execute(
+        text(
+            "INSERT INTO runs "
+            "(id, type, status, agent_id, created_at, created_by_user_id) "
+            "VALUES (:id, 'suite', 'completed', :agent_id, :created_at, :user_id) "
+            "ON CONFLICT (id) DO NOTHING"
+        ),
+        {
+            "id": parent_id,
+            "agent_id": agent_id,
+            "created_at": batch_created_at,
+            "user_id": _SEED_USER_ID,
+        },
+    )
+
+    child_verdicts: list[str] = []
+    completed_child_ids: list[uuid.UUID] = []
+    for j in range(batch_size):
+        call_id = _id(f"demo:call:{index}:{j}")
+        scenario_id = scenario_ids[j % len(scenario_ids)]
+        status, badge = _demo_child_outcome(rng)
+        created_at = batch_created_at + timedelta(minutes=j)
+        cost = round(rng.uniform(0.04, 0.22), 4) if status == "completed" else None
+        metrics = {"resultBadge": badge} if badge else None
+
+        await conn.execute(
+            text(
+                "INSERT INTO runs "
+                "(id, type, status, agent_id, scenario_id, parent_run_id, created_at, "
+                " metrics, cost, created_by_user_id) "
+                "VALUES (:id, 'suite', :status, :agent_id, :scenario_id, :parent_id, "
+                " :created_at, CAST(:metrics AS jsonb), CAST(:cost AS jsonb), :user_id) "
+                "ON CONFLICT (id) DO NOTHING"
+            ),
+            {
+                "id": call_id,
+                "status": status,
+                "agent_id": agent_id,
+                "scenario_id": scenario_id,
+                "parent_id": parent_id,
+                "created_at": created_at,
+                "metrics": json.dumps(metrics) if metrics else None,
+                "cost": json.dumps({"estUsd": cost}) if cost is not None else None,
+                "user_id": _SEED_USER_ID,
+            },
+        )
+        if status == "completed":
+            completed_child_ids.append(call_id)
+            if badge:
+                child_verdicts.append(badge)
+
+            # A handful of agent-side turns with a realistic latency spread
+            # (occasionally over the 1,000ms threshold, so the latency
+            # histogram/flagged-turns card has real texture, not a flat
+            # distribution).
+            for idx in range(rng.randint(2, 4)):
+                latency_ms = (
+                    rng.randint(1100, 1900) if rng.random() < 0.12 else rng.randint(350, 950)
+                )
+                await conn.execute(
+                    text(
+                        "INSERT INTO turns (run_id, idx, role, text, latency_ms) "
+                        "VALUES (:run_id, :idx, 'agent', 'Demo agent turn', :latency_ms) "
+                        "ON CONFLICT DO NOTHING"
+                    ),
+                    {"run_id": call_id, "idx": idx * 2, "latency_ms": latency_ms},
+                )
+
+            # Independent-of-badge assertion failures -- gives "Top failing
+            # checks" a believable, non-zero fail rate per check.
+            for assertion in _SEED_ASSERTIONS:
+                fail_chance = 0.15 if assertion["id"] == "a1" else 0.08
+                a_status = "failed" if rng.random() < fail_chance else "passed"
+                await conn.execute(
+                    text(
+                        "INSERT INTO assertion_results (run_id, assertion_id, name, status) "
+                        "VALUES (:run_id, :assertion_id, :name, :status) "
+                        "ON CONFLICT DO NOTHING"
+                    ),
+                    {
+                        "run_id": call_id,
+                        "assertion_id": assertion["id"],
+                        "name": assertion["name"],
+                        "status": a_status,
+                    },
+                )
+
+    # rollup.py's real default (no rubric configured) always rolls a batch
+    # up to 'pass' regardless of individual child failures -- replicated
+    # here, not invented, so the demo's Recent Test Runs matches production
+    # behaviour. `suite:billing` gets a rubric (see seed_demo) so at least
+    # one suite's batches show a real, rubric-driven 'fail' too.
+    if apply_rubric and child_verdicts:
+        pass_rate = sum(1 for v in child_verdicts if v == "pass") / len(child_verdicts)
+        parent_badge = "fail" if pass_rate < 0.85 else "pass"
+    else:
+        parent_badge = "pass"
+
+    await conn.execute(
+        text("UPDATE runs SET metrics = CAST(:metrics AS jsonb) WHERE id = :id"),
+        {"id": parent_id, "metrics": json.dumps({"resultBadge": parent_badge})},
+    )
+    return completed_child_ids
+
+
+async def _seed_demo_findings(conn: AsyncConnection, run_ids: list[uuid.UUID]) -> None:
+    """Two open critical findings (ticket's own "done when"), each on a
+    real completed demo call -- `findings.run_id` has no other reachable
+    project scope, so a dashboard query that joins through `runs` picks
+    these up naturally."""
+    for i, (run_id, category) in enumerate(zip(run_ids, _DEMO_FINDING_CATEGORIES, strict=True)):
+        await conn.execute(
+            text(
+                "INSERT INTO findings "
+                "(id, run_id, category, severity, verdict, attack_prompt, agent_response, "
+                " evidence, suggested_fix) "
+                "VALUES (:id, :run_id, :category, 'critical', 'leaked', :prompt, :response, "
+                " :evidence, :fix) "
+                "ON CONFLICT (id) DO NOTHING"
+            ),
+            {
+                "id": _id(f"demo:finding:{i}"),
+                "run_id": run_id,
+                "category": category,
+                "prompt": "Demo adversarial prompt used to seed a realistic dashboard.",
+                "response": "Demo agent response that (in this seeded fixture) leaked data.",
+                "evidence": "Demo verbatim evidence quote.",
+                "fix": "Demo suggested fix: tighten the relevant system-prompt guardrail.",
+            },
+        )
+
+
+async def seed_demo(engine: AsyncEngine) -> None:
+    """B2.8-05. Requires `seed()` to have already run (reuses its agents/
+    suites/scenarios/personas ids) -- `main()` below always calls both, in
+    order, so `--demo` alone is never a valid state to leave the DB in."""
+    rng = random.Random(_DEMO_SEED)
+    now = datetime.now(UTC)
+    scenario_ids_by_suite = _demo_scenario_ids_by_suite()
+    batch_specs = _demo_batch_specs(rng)
+
+    async with engine.connect() as conn, conn.begin():
+        await _seed_demo_agent(conn)
+        billing_suite_id = _id("suite:billing")
+        await conn.execute(
+            text("UPDATE suites SET rubric = CAST(:rubric AS jsonb) WHERE id = :id"),
+            {"id": billing_suite_id, "rubric": json.dumps({"minPassRate": 0.85})},
+        )
+
+        all_completed_ids: list[uuid.UUID] = []
+        for i, (suite_key, days_ago, batch_size) in enumerate(batch_specs):
+            agent_id = _id(_SUITE_TO_AGENT[suite_key])
+            completed_ids = await _seed_demo_batch(
+                conn,
+                index=i,
+                suite_key=suite_key,
+                agent_id=agent_id,
+                scenario_ids=scenario_ids_by_suite[suite_key],
+                days_ago=days_ago,
+                batch_size=batch_size,
+                apply_rubric=(suite_key == "suite:billing"),
+                rng=rng,
+                now=now,
+            )
+            all_completed_ids.extend(completed_ids)
+
+        await _seed_demo_findings(conn, all_completed_ids[:2])
+
+
 async def main() -> None:
-    await seed(get_engine())
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--demo",
+        action="store_true",
+        help="also seed ~200 synthetic calls across ~20 batches over 30 days (B2.8-05), "
+        "so a fresh dashboard isn't empty. Never point this at a real production "
+        "DATABASE_URL -- it's fixture data, not a real customer's history.",
+    )
+    args = parser.parse_args()
+
+    engine = get_engine()
+    await seed(engine)
     print(
         "Seed complete: 3 agents, 3 suites, 7 scenarios, 3 personas, 9 metrics, 4 completed runs."
     )
+    if args.demo:
+        await seed_demo(engine)
+        print(
+            "Demo data complete: +1 agent, ~20 batches / ~200 calls over 30 days, "
+            "2 open critical findings."
+        )
 
 
 if __name__ == "__main__":
