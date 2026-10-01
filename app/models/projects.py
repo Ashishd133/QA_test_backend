@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import ForeignKey, Text
+from sqlalchemy import ForeignKey, Numeric, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin, uuid_pk
@@ -34,3 +34,7 @@ class Project(Base, TimestampMixin):
     # historical runs/suites/agents resolvable rather than cascading. Every
     # list/lookup filters this out; nothing hard-deletes a project row.
     deleted_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    # B2.8-04: NULL = no budget configured -- the spend card's "done when"
+    # is that this case returns `null`, not a fake 0%, so the UI hides the
+    # credits bar rather than showing one.
+    budget_usd_monthly: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)

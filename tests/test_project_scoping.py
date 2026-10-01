@@ -32,8 +32,6 @@ _EXEMPT: set[tuple[str, str]] = {
     ("PATCH", "/v1/projects/{project_id}"),
     ("DELETE", "/v1/projects/{project_id}"),
     ("GET", "/v1/organizations"),
-    ("GET", "/v1/metrics/dashboard"),
-    ("GET", "/v1/personas"),
     ("POST", "/v1/agents/test-connection"),
 }
 

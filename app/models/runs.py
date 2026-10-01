@@ -144,3 +144,8 @@ class Finding(Base, OrgScopedMixin, TimestampMixin):
     turn_refs: Mapped[list[int]] = mapped_column(
         ARRAY(Integer), nullable=False, server_default="{}"
     )
+    # B2.8-01: NULL = open, non-NULL = when it was resolved. B4-04/B4-05
+    # (the findings write path) don't specify a resolution field yet, so
+    # this is a minimal, additive guess the dashboard's "open critical
+    # findings" card needs now rather than a name B4 is committed to.
+    resolved_at: Mapped[datetime | None] = mapped_column(nullable=True)

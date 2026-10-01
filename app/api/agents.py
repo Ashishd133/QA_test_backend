@@ -9,11 +9,18 @@ provided type:
   row shape); `GET/POST/PATCH /v1/agents{,/{id}}` return the fuller
   `AgentDetail` (config, language, max_concurrency) needed by a
   create/edit form. `GET /v1/agents/health` returns `AgentHealth[]`.
-- `status`/`last_seen_at` are real DB columns, but nothing populates
-  them yet -- B3-02 (agent liveness) is the ticket that actually
-  probes agents periodically. Until then every agent reports
-  ConnectionStatus "Offline" (conservative: absence of a health signal
-  is not evidence of health) and AgentHealth.uptime "Never probed".
+- `agents.status`/`last_seen_at` (the raw DB columns, still surfaced
+  verbatim on `AgentDetail` for the create/edit form) are real columns
+  but nothing ever writes them -- real periodic probing is still B3-02
+  (agent liveness), unbuilt. `ConnectedAgent.status` and `AgentHealth`
+  do NOT read those dead columns: B2.8-01 needed a real (if minimal)
+  signal for the dashboard's Agent Health card now, so `derive_agent_liveness`
+  below infers it from actual call history instead -- healthy if the
+  agent's most recent completed real call was within 24h, degraded
+  within 7d, offline (or "never probed") otherwise. This is a proxy,
+  not a heartbeat: an agent with no traffic reads as offline even if
+  it's actually fine, and B3-02 replacing this with real probing is not
+  a breaking change (same three-state shape).
 - `POST /v1/agents/test-connection` (pre-save) and
   `POST /v1/agents/{id}/test-connection` (post-save) both return a
   canned success for `web` and `501 not_supported` for `sip`/`phone` --
@@ -28,6 +35,7 @@ provided type:
 
 import json
 import uuid
+from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, status
@@ -74,19 +82,68 @@ def _meta(transport: str, language: str | None) -> str:
     return f"{label} · {language}" if language else label
 
 
-def _connected_agent(row: RowMapping) -> ConnectedAgent:
+# Real periodic probing is B3-02's job; until it lands, this thresholds an
+# agent's own call history as a proxy liveness signal (module docstring).
+_HEALTHY_WITHIN = timedelta(hours=24)
+_DEGRADED_WITHIN = timedelta(days=7)
+
+_LAST_SEEN_SQL = text(
+    "SELECT a.id AS agent_id, MAX(r.created_at) AS last_seen_at "
+    "FROM agents a LEFT JOIN runs r "
+    "  ON r.agent_id = a.id AND r.status = 'completed' AND r.cost IS NOT NULL "
+    "WHERE a.project_id = :project_id "
+    "GROUP BY a.id"
+)
+
+
+async def derive_agent_liveness(
+    conn: AsyncConnection, project_id: uuid.UUID
+) -> dict[uuid.UUID, tuple[ConnectionStatus, datetime | None]]:
+    """`r.cost IS NOT NULL` is the same "real executing call" predicate
+    used elsewhere (only a genuine child Call or a childless single-run
+    Test Run ever gets `cost` written -- a batch's parent orchestrator
+    row never does), so a batch parent can't masquerade as a live call.
+
+    No leading underscore, unlike this module's other helpers: B2.8-01's
+    dashboard embeds the same Agent Health card inline (one round trip,
+    not a second HTTP call to this router), and importing this one
+    function from app/api/dashboard.py is a deliberate, narrow exception
+    to "api modules don't import each other" -- the alternative is a second,
+    silently-driftable copy of these liveness thresholds."""
+    rows = (await conn.execute(_LAST_SEEN_SQL, {"project_id": project_id})).mappings().all()
+    now = datetime.now(UTC)
+    result: dict[uuid.UUID, tuple[ConnectionStatus, datetime | None]] = {}
+    for row in rows:
+        last_seen_at = row["last_seen_at"]
+        if last_seen_at is None:
+            result[row["agent_id"]] = ("Offline", None)
+        elif now - last_seen_at <= _HEALTHY_WITHIN:
+            result[row["agent_id"]] = ("Healthy", last_seen_at)
+        elif now - last_seen_at <= _DEGRADED_WITHIN:
+            result[row["agent_id"]] = ("Degraded", last_seen_at)
+        else:
+            result[row["agent_id"]] = ("Offline", last_seen_at)
+    return result
+
+
+def _connected_agent(
+    row: RowMapping, liveness: dict[uuid.UUID, tuple[ConnectionStatus, datetime | None]]
+) -> ConnectedAgent:
+    conn_status, _ = liveness.get(row["id"], ("Offline", None))
     return ConnectedAgent(
         id=str(row["id"]),
         name=row["name"],
         meta=_meta(row["transport"], row["language"]),
         tag=_TAG_BY_TRANSPORT.get(row["transport"], "RTC"),
-        status=_status_label(row["status"]),
+        status=conn_status,
     )
 
 
-def _agent_health(row: RowMapping) -> AgentHealth:
-    conn_status = _status_label(row["status"])
-    uptime = "Never probed" if row["last_seen_at"] is None else relative_time(row["last_seen_at"])
+def agent_health_from_liveness(
+    row: RowMapping, liveness: dict[uuid.UUID, tuple[ConnectionStatus, datetime | None]]
+) -> AgentHealth:
+    conn_status, last_seen_at = liveness.get(row["id"], ("Offline", None))
+    uptime = "Never probed" if last_seen_at is None else relative_time(last_seen_at)
     return AgentHealth(
         id=str(row["id"]),
         name=row["name"],
@@ -137,7 +194,8 @@ async def list_agents(
             .mappings()
             .all()
         )
-    return [_connected_agent(row) for row in rows]
+        liveness = await derive_agent_liveness(conn, project_id)
+    return [_connected_agent(row, liveness) for row in rows]
 
 
 @router.get("/v1/agents/health", response_model=list[AgentHealth])
@@ -159,7 +217,8 @@ async def agents_health(
             .mappings()
             .all()
         )
-    return [_agent_health(row) for row in rows]
+        liveness = await derive_agent_liveness(conn, project_id)
+    return [agent_health_from_liveness(row, liveness) for row in rows]
 
 
 @router.post("/v1/agents", response_model=AgentDetail, status_code=status.HTTP_201_CREATED)

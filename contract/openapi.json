@@ -566,6 +566,13 @@
       },
       "DashboardMetrics": {
         "properties": {
+          "agentHealth": {
+            "items": {
+              "$ref": "#/components/schemas/AgentHealth"
+            },
+            "title": "Agenthealth",
+            "type": "array"
+          },
           "avgLatency": {
             "title": "Avglatency",
             "type": "string"
@@ -574,6 +581,9 @@
             "title": "Avglatencydelta",
             "type": "string"
           },
+          "latency": {
+            "$ref": "#/components/schemas/LatencyPercentiles"
+          },
           "outcome": {
             "$ref": "#/components/schemas/Outcome"
           },
@@ -581,9 +591,26 @@
             "title": "Passrate",
             "type": "string"
           },
+          "passRateBySuite": {
+            "items": {
+              "$ref": "#/components/schemas/SuitePassRateSeries"
+            },
+            "title": "Passratebysuite",
+            "type": "array"
+          },
           "passRateDelta": {
             "title": "Passratedelta",
             "type": "string"
+          },
+          "posture": {
+            "$ref": "#/components/schemas/PostureCards"
+          },
+          "recentRuns": {
+            "items": {
+              "$ref": "#/components/schemas/RecentRun"
+            },
+            "title": "Recentruns",
+            "type": "array"
           },
           "scenarioCoverage": {
             "title": "Scenariocoverage",
@@ -592,6 +619,9 @@
           "scenarioCoverageDelta": {
             "title": "Scenariocoveragedelta",
             "type": "string"
+          },
+          "spend": {
+            "$ref": "#/components/schemas/SpendSummary"
           },
           "testRuns7d": {
             "title": "Testruns7D",
@@ -607,6 +637,15 @@
             },
             "title": "Trendbars",
             "type": "array"
+          },
+          "window": {
+            "enum": [
+              "24h",
+              "7d",
+              "30d"
+            ],
+            "title": "Window",
+            "type": "string"
           }
         },
         "required": [
@@ -619,7 +658,14 @@
           "scenarioCoverage",
           "scenarioCoverageDelta",
           "trendBars",
-          "outcome"
+          "outcome",
+          "window",
+          "posture",
+          "passRateBySuite",
+          "latency",
+          "spend",
+          "recentRuns",
+          "agentHealth"
         ],
         "title": "DashboardMetrics",
         "type": "object"
@@ -895,6 +941,71 @@
         "title": "ExposureData",
         "type": "object"
       },
+      "FailingCheck": {
+        "description": "B2.8-03. `kind`/`check_id` together identify the check across the\ntwo source tables (`assertion_results`/`metric_results`) that don't\nshare an id space. `drilldown_filter` is the exact `GET /v1/runs` query\nstring a click-through appends -- server-defined so the dashboard's\ncount and the calls list's count can't drift apart (the ticket's own\n\"done when\": clicking a row returns exactly `fail_count` calls).",
+        "properties": {
+          "checkId": {
+            "title": "Checkid",
+            "type": "string"
+          },
+          "drilldownFilter": {
+            "title": "Drilldownfilter",
+            "type": "string"
+          },
+          "failCount": {
+            "title": "Failcount",
+            "type": "integer"
+          },
+          "kind": {
+            "enum": [
+              "assertion",
+              "metric"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "lastSeenAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lastseenat"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "ratePct": {
+            "title": "Ratepct",
+            "type": "number"
+          },
+          "scopeLabel": {
+            "title": "Scopelabel",
+            "type": "string"
+          },
+          "totalCount": {
+            "title": "Totalcount",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "kind",
+          "checkId",
+          "name",
+          "scopeLabel",
+          "failCount",
+          "totalCount",
+          "ratePct",
+          "lastSeenAt",
+          "drilldownFilter"
+        ],
+        "title": "FailingCheck",
+        "type": "object"
+      },
       "GeneratedDraftSummary": {
         "properties": {
           "assertions": {
@@ -1002,6 +1113,74 @@
           "path"
         ],
         "title": "IntentData",
+        "type": "object"
+      },
+      "LatencyPercentiles": {
+        "description": "B2.8-02. Same `window` as the posture cards.",
+        "properties": {
+          "flaggedTurns": {
+            "title": "Flaggedturns",
+            "type": "integer"
+          },
+          "histogram": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Histogram",
+            "type": "array"
+          },
+          "p50Ms": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "P50Ms"
+          },
+          "p90Ms": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "P90Ms"
+          },
+          "p95Ms": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "P95Ms"
+          },
+          "thresholdMs": {
+            "title": "Thresholdms",
+            "type": "integer"
+          },
+          "totalTurns": {
+            "title": "Totalturns",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "p50Ms",
+          "p90Ms",
+          "p95Ms",
+          "thresholdMs",
+          "totalTurns",
+          "flaggedTurns",
+          "histogram"
+        ],
+        "title": "LatencyPercentiles",
         "type": "object"
       },
       "MetricCreate": {
@@ -1846,6 +2025,82 @@
         "title": "PhoneConfig",
         "type": "object"
       },
+      "PostureCards": {
+        "description": "B2.8-01. All four cards share one `window` (the request's own\n`window` query param) and compare against the immediately preceding\nwindow of the same length -- `pass_rate_delta_pts`/`latency_p95_delta_ms`\nare `current - prior`, not a percentage change.",
+        "properties": {
+          "callsCancelled": {
+            "title": "Callscancelled",
+            "type": "integer"
+          },
+          "callsFailed": {
+            "title": "Callsfailed",
+            "type": "integer"
+          },
+          "callsRun": {
+            "title": "Callsrun",
+            "type": "integer"
+          },
+          "latencyP95DeltaMs": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latencyp95Deltams"
+          },
+          "latencyP95Ms": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latencyp95Ms"
+          },
+          "latencyThresholdMs": {
+            "title": "Latencythresholdms",
+            "type": "integer"
+          },
+          "openCriticalFindings": {
+            "title": "Opencriticalfindings",
+            "type": "integer"
+          },
+          "openCriticalFindingsByCategory": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Opencriticalfindingsbycategory",
+            "type": "object"
+          },
+          "passRateDeltaPts": {
+            "title": "Passratedeltapts",
+            "type": "number"
+          },
+          "passRatePct": {
+            "title": "Passratepct",
+            "type": "number"
+          }
+        },
+        "required": [
+          "passRatePct",
+          "passRateDeltaPts",
+          "callsRun",
+          "callsFailed",
+          "callsCancelled",
+          "latencyP95Ms",
+          "latencyP95DeltaMs",
+          "latencyThresholdMs",
+          "openCriticalFindings",
+          "openCriticalFindingsByCategory"
+        ],
+        "title": "PostureCards",
+        "type": "object"
+      },
       "ProgressData": {
         "description": "B2.5-04: emitted on the *parent's* run_events (not the child's) every\ntime a child reaches a terminal status -- see app.workers.rollup. Exists\nso a future push channel on the parent's own SSE stream is a config\nchange, not a rewrite (the ticket's own phrasing).",
         "properties": {
@@ -1916,6 +2171,68 @@
           }
         },
         "title": "ProjectUpdate",
+        "type": "object"
+      },
+      "RecentRun": {
+        "properties": {
+          "agentName": {
+            "title": "Agentname",
+            "type": "string"
+          },
+          "callCount": {
+            "title": "Callcount",
+            "type": "integer"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "passRate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Passrate"
+          },
+          "status": {
+            "enum": [
+              "pass",
+              "warn",
+              "fail",
+              "idle"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "trigger": {
+            "enum": [
+              "manual",
+              "schedule",
+              "ci",
+              "api"
+            ],
+            "title": "Trigger",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "agentName",
+          "trigger",
+          "callCount",
+          "passRate",
+          "status"
+        ],
+        "title": "RecentRun",
         "type": "object"
       },
       "RedteamRunCreate": {
@@ -2922,6 +3239,44 @@
         "title": "SipConfig",
         "type": "object"
       },
+      "SpendSummary": {
+        "description": "B2.8-04. `credits_remaining_pct` is null whenever the project has no\n`budget_usd_monthly` configured -- the UI hides the bar rather than\nshowing a fake 0%, per the ticket's own \"done when\" bar.",
+        "properties": {
+          "costPerCall": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Costpercall"
+          },
+          "creditsRemainingPct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Creditsremainingpct"
+          },
+          "windowSpend": {
+            "title": "Windowspend",
+            "type": "number"
+          }
+        },
+        "required": [
+          "costPerCall",
+          "windowSpend",
+          "creditsRemainingPct"
+        ],
+        "title": "SpendSummary",
+        "type": "object"
+      },
       "StatusData": {
         "properties": {
           "status": {
@@ -3181,6 +3536,40 @@
           "suiteIds"
         ],
         "title": "SuiteMoveRequest",
+        "type": "object"
+      },
+      "SuitePassRateSeries": {
+        "description": "Always the trailing 14 calendar days regardless of `window` -- the\nredesign's own \"Daily, last 14 days\" caption, matching v1's trend_bars\nconvention rather than being re-scoped by the window selector.",
+        "properties": {
+          "dailyPassRate": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "title": "Dailypassrate",
+            "type": "array"
+          },
+          "suiteId": {
+            "title": "Suiteid",
+            "type": "string"
+          },
+          "suiteName": {
+            "title": "Suitename",
+            "type": "string"
+          }
+        },
+        "required": [
+          "suiteId",
+          "suiteName",
+          "dailyPassRate"
+        ],
+        "title": "SuitePassRateSeries",
         "type": "object"
       },
       "SuiteRunCreate": {
@@ -4114,6 +4503,23 @@
     "/v1/metrics/dashboard": {
       "get": {
         "operationId": "get_dashboard_metrics",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "window",
+            "required": false,
+            "schema": {
+              "default": "7d",
+              "enum": [
+                "24h",
+                "7d",
+                "30d"
+              ],
+              "title": "Window",
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -4124,9 +4530,83 @@
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           }
         },
         "summary": "Get Dashboard Metrics",
+        "tags": [
+          "dashboard"
+        ]
+      }
+    },
+    "/v1/metrics/failing-checks": {
+      "get": {
+        "operationId": "get_failing_checks",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "window",
+            "required": false,
+            "schema": {
+              "default": "7d",
+              "enum": [
+                "24h",
+                "7d",
+                "30d"
+              ],
+              "title": "Window",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 10,
+              "maximum": 50,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/FailingCheck"
+                  },
+                  "title": "Response Get Failing Checks",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Failing Checks",
         "tags": [
           "dashboard"
         ]
