@@ -64,7 +64,11 @@ def register_exception_handlers(app: FastAPI) -> None:
     async def validation_exception_handler(
         request: Request, exc: RequestValidationError
     ) -> JSONResponse:
-        details = jsonable_encoder(exc.errors())
+        # `input` is dropped: Pydantic echoes the submitted value back, which
+        # for e.g. an agent config would return its apiSecret in the 422 body.
+        details = jsonable_encoder(
+            [{k: v for k, v in err.items() if k != "input"} for err in exc.errors()]
+        )
         return JSONResponse(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             content=_envelope("validation_error", "Request validation failed", details),

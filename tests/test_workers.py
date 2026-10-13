@@ -52,7 +52,23 @@ async def _clear_runs_table(engine: AsyncEngine) -> AsyncIterator[None]:
         await conn.execute(text("DELETE FROM turns"))
         await conn.execute(text("DELETE FROM assertion_results"))
         await conn.execute(text("DELETE FROM run_events"))
+        # Later phases added more tables that reference runs with no ON
+        # DELETE CASCADE (discovery graph, findings -- the latter seeded by
+        # B2.8-05 -- and metric_results); each blocks the bare `DELETE FROM
+        # runs`. Children first.
+        for table in (
+            "discovery_edges",
+            "discovery_nodes",
+            "discovery_drafts",
+            "discovery_intents",
+            "findings",
+            "metric_results",
+        ):
+            await conn.execute(text(f"DELETE FROM {table}"))
         await conn.execute(text("DELETE FROM runs"))
+        # suites reference agents with no ON DELETE policy (scenarios and
+        # discovery drafts cascade from suites).
+        await conn.execute(text("DELETE FROM suites"))
         await conn.execute(text("DELETE FROM agents"))
     yield
 

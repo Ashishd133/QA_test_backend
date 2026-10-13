@@ -23,7 +23,6 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 from dotenv import load_dotenv
-from livekit import api
 from loguru import logger
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.frames.frames import (
@@ -45,6 +44,7 @@ from pipecat.workers.runner import WorkerRunner
 from app.engine.caller.latency_clock import LatencyClock, TurnLatency
 from app.engine.caller.persona import PersonaCaller, PersonaSpec, Turn
 from app.engine.caller.recording import start_room_recording, stop_room_recording
+from app.engine.livekit_creds import LiveKitCreds, env_creds, mint_token
 from app.gcp_auth import google_credentials_kwargs, load_google_oauth2_credentials
 
 # The narrow subset of runs.end_reason (B2-06) that a persona-driven call
@@ -206,15 +206,8 @@ class PersonaRunner(FrameProcessor):
         return self._transcript
 
 
-def _build_token(api_key: str, api_secret: str, room: str) -> str:
-    grants = api.VideoGrants(room_join=True, room=room)
-    return (
-        api.AccessToken(api_key, api_secret)
-        .with_identity("cadence-caller")
-        .with_name("Cadence Caller")
-        .with_grants(grants)
-        .to_jwt()
-    )
+async def _no_recording() -> None:
+    return None
 
 
 @dataclass(frozen=True)
@@ -241,6 +234,7 @@ async def run_persona_call(
     latency_clock: LatencyClock | None = None,
     cancel_event: asyncio.Event | None = None,
     run_id: uuid.UUID | None = None,
+    livekit: LiveKitCreds | None = None,
 ) -> PersonaCallResult:
     """Runs one full call against whatever reference agent is currently
     registered with the LiveKit project (see this module's docstring), drives
@@ -275,15 +269,14 @@ async def run_persona_call(
     the caller/STT spans and (via app/engine/executor/simulation.py's own
     spans, tagged with the same run_id) the judge spans, correlated.
     """
-    url = os.environ["LIVEKIT_URL"]
-    api_key = os.environ["LIVEKIT_API_KEY"]
-    api_secret = os.environ["LIVEKIT_API_SECRET"]
+    creds = livekit if livekit is not None else env_creds()
+    url, api_key, api_secret = creds.url, creds.api_key, creds.api_secret
     project = os.environ["GOOGLE_CLOUD_PROJECT"]
     location = os.environ["GOOGLE_CLOUD_LOCATION"]
 
     with logger.contextualize(run_id=str(run_id) if run_id is not None else None):
         room_name = f"persona-call-{uuid.uuid4().hex[:8]}"
-        token = _build_token(api_key, api_secret, room_name)
+        token = mint_token(creds, room_name)
         logger.info(f"joining room {room_name!r} as cadence-caller (persona={persona.name!r})")
 
         credentials = load_google_oauth2_credentials()
@@ -340,10 +333,14 @@ async def run_persona_call(
         # a slow/failing egress-start call should never delay the persona's
         # opening line. Recording is opt-in (RECORDING_GCS_BUCKET) and
         # best-effort either way; see app.engine.caller.recording.
+        # B3-01b: only on Cadence's own LiveKit project -- egress on a
+        # bring-your-own project would bill the user and write to our bucket.
         recording_task = asyncio.create_task(
             start_room_recording(
                 url=url, api_key=api_key, api_secret=api_secret, room_name=room_name
             )
+            if creds.is_cadence_project
+            else _no_recording()
         )
 
         try:

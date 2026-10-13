@@ -22,10 +22,11 @@ provided type:
   it's actually fine, and B3-02 replacing this with real probing is not
   a breaking change (same three-state shape).
 - `POST /v1/agents/test-connection` (pre-save) and
-  `POST /v1/agents/{id}/test-connection` (post-save) both return a
-  canned success for `web` and `501 not_supported` for `sip`/`phone` --
-  matching B3-01's real ticket verbatim ("SIP/Phone tabs return 501
-  not_supported"), not a temporary stub for those two transports.
+  `POST /v1/agents/{id}/test-connection` (post-save) run a real LiveKit
+  join for `web` (app/engine/agent_probe.py, B3-01/B3-01b: the probe mints
+  its own token from the agent's stored LiveKit credentials) -- failures are a
+  200 with `success: false` + `error_code`, not an HTTP error -- and
+  return `501 not_supported` for `sip`/`phone`.
 - Deleting an agent referenced by any suite or run 409s rather than
   crashing on the FK (agents.id has no ON DELETE policy, deliberately:
   unlike scenarios->runs, silently cascading a delete through an
@@ -36,7 +37,7 @@ provided type:
 import json
 import uuid
 from datetime import UTC, datetime, timedelta
-from typing import Any, Literal
+from typing import Any
 
 from fastapi import APIRouter, Depends, status
 from sqlalchemy import text
@@ -45,6 +46,14 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from app.db import get_engine
 from app.deps import ensure_project_match, require_project_id, require_user_id
+from app.engine.agent_probe import ProbeResult, probe_livekit
+from app.engine.livekit_creds import (
+    LiveKitCreds,
+    build_stored_web_config,
+    creds_from_stored,
+    public_web_config,
+    stored_secret_envelope,
+)
 from app.errors import APIError
 from app.formatting import relative_time
 from app.schemas.agents import (
@@ -56,7 +65,10 @@ from app.schemas.agents import (
     ConnectedAgent,
     ConnectionStatus,
     ConnectionTag,
+    PhoneConfig,
+    SipConfig,
     TestConnectionResult,
+    WebConfig,
 )
 
 router = APIRouter(tags=["agents"])
@@ -153,13 +165,48 @@ def agent_health_from_liveness(
     )
 
 
+def _public_config(transport: str, stored: dict[str, Any]) -> dict[str, Any]:
+    return public_web_config(stored) if transport == "web" else stored
+
+
+def _stored_config(
+    config: WebConfig | SipConfig | PhoneConfig, existing: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """The jsonb to persist for `config`. For web: encrypts the API secret,
+    or on update (`existing` given) keeps the stored envelope when the
+    request omitted one."""
+    if not isinstance(config, WebConfig):
+        return config.model_dump(mode="json", by_alias=True)
+    if config.api_secret:
+        return build_stored_web_config(
+            room_url=config.room_url,
+            api_key=config.api_key,
+            api_secret=config.api_secret,
+            agent_name=config.agent_name,
+        )
+    envelope = stored_secret_envelope(existing or {})
+    if envelope is None:
+        raise APIError(
+            "validation_error",
+            "apiSecret is required for a web agent",
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+        )
+    return {
+        "transport": "web",
+        "roomUrl": config.room_url,
+        "apiKey": config.api_key,
+        "agentName": config.agent_name,
+        "secret": envelope,
+    }
+
+
 def _agent_detail(row: RowMapping) -> AgentDetail:
     return AgentDetail(
         id=str(row["id"]),
         name=row["name"],
         project_id=str(row["project_id"]),
         transport=row["transport"],
-        config=row["config"],
+        config=_public_config(row["transport"], row["config"]),
         language=row["language"],
         max_concurrency=row["max_concurrency"],
         status=row["status"],
@@ -228,7 +275,7 @@ async def create_agent(
     project_id: uuid.UUID = Depends(require_project_id),
     engine: AsyncEngine = Depends(get_engine),
 ) -> AgentDetail:
-    config_dict = body.config.model_dump(mode="json", by_alias=True)
+    config_dict = _stored_config(body.config)
     async with engine.connect() as conn, conn.begin():
         row = (
             (
@@ -302,33 +349,10 @@ async def update_agent(
     project_id: uuid.UUID = Depends(require_project_id),
     engine: AsyncEngine = Depends(get_engine),
 ) -> AgentDetail:
-    updates: dict[str, Any] = {}
-    if body.name is not None:
-        updates["name"] = body.name
-    if body.language is not None:
-        updates["language"] = body.language
-    if body.max_concurrency is not None:
-        updates["max_concurrency"] = body.max_concurrency
-    if body.config is not None:
-        updates["transport"] = body.config.transport
-        updates["config"] = _dump_json(body.config.model_dump(mode="json", by_alias=True))
-    if body.prompt is not None:
-        updates["prompt"] = body.prompt
-    if body.description is not None:
-        updates["description"] = body.description
-
     async with engine.connect() as conn, conn.begin():
-        await _fetch_agent_or_404(conn, agent_id, project_id)
-        if updates:
-            assignments = []
-            params: dict[str, Any] = {"id": agent_id}
-            for col, val in updates.items():
-                clause = f"{col} = CAST(:{col} AS jsonb)" if col == "config" else f"{col} = :{col}"
-                assignments.append(clause)
-                params[col] = val
-            await conn.execute(
-                text(f"UPDATE agents SET {', '.join(assignments)} WHERE id = :id"), params
-            )
+        existing = await _fetch_agent_or_404(conn, agent_id, project_id)
+        updates = _agent_updates(body, existing)
+        await _apply_updates(conn, agent_id, updates)
         row = (
             (
                 await conn.execute(
@@ -339,6 +363,38 @@ async def update_agent(
             .one()
         )
     return _agent_detail(row)
+
+
+def _agent_updates(body: AgentUpdate, existing: RowMapping) -> dict[str, Any]:
+    updates: dict[str, Any] = {}
+    if body.name is not None:
+        updates["name"] = body.name
+    if body.language is not None:
+        updates["language"] = body.language
+    if body.max_concurrency is not None:
+        updates["max_concurrency"] = body.max_concurrency
+    if body.config is not None:
+        updates["transport"] = body.config.transport
+        updates["config"] = _dump_json(_stored_config(body.config, existing["config"]))
+    if body.prompt is not None:
+        updates["prompt"] = body.prompt
+    if body.description is not None:
+        updates["description"] = body.description
+    return updates
+
+
+async def _apply_updates(
+    conn: AsyncConnection, agent_id: uuid.UUID, updates: dict[str, Any]
+) -> None:
+    if not updates:
+        return
+    assignments = []
+    params: dict[str, Any] = {"id": agent_id}
+    for col, val in updates.items():
+        clause = f"{col} = CAST(:{col} AS jsonb)" if col == "config" else f"{col} = :{col}"
+        assignments.append(clause)
+        params[col] = val
+    await conn.execute(text(f"UPDATE agents SET {', '.join(assignments)} WHERE id = :id"), params)
 
 
 @router.delete("/v1/agents/{agent_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -369,19 +425,31 @@ async def delete_agent(
         await conn.execute(text("DELETE FROM agents WHERE id = :id"), {"id": agent_id})
 
 
-def _test_connection_result(transport: Literal["web", "sip", "phone"]) -> TestConnectionResult:
-    if transport != "web":
-        raise APIError(
-            "not_supported",
-            f"{transport} test-connection is not yet supported",
-            status.HTTP_501_NOT_IMPLEMENTED,
-        )
-    return TestConnectionResult(success=True, rtt_ms=42, detail="stub result -- real in B3-01")
+def _unsupported(transport: str) -> APIError:
+    return APIError(
+        "not_supported",
+        f"{transport} test-connection is not yet supported",
+        status.HTTP_501_NOT_IMPLEMENTED,
+    )
+
+
+def _as_response(result: ProbeResult) -> TestConnectionResult:
+    return TestConnectionResult(
+        success=result.success,
+        rtt_ms=result.rtt_ms,
+        detail=result.detail,
+        error_code=result.error_code,
+    )
 
 
 @router.post("/v1/agents/test-connection", response_model=TestConnectionResult)
 async def test_connection_pre_save(body: AgentConfig) -> TestConnectionResult:
-    return _test_connection_result(body.transport)
+    if not isinstance(body, WebConfig):
+        raise _unsupported(body.transport)
+    if not body.api_secret:
+        return _as_response(ProbeResult(False, "API secret is required", error_code="bad_config"))
+    creds = LiveKitCreds(body.room_url, body.api_key, body.api_secret, body.agent_name or None)
+    return _as_response(await probe_livekit(creds))
 
 
 @router.post("/v1/agents/{agent_id}/test-connection", response_model=TestConnectionResult)
@@ -392,4 +460,15 @@ async def test_connection_post_save(
 ) -> TestConnectionResult:
     async with engine.connect() as conn:
         row = await _fetch_agent_or_404(conn, agent_id, project_id)
-    return _test_connection_result(row["transport"])
+    if row["transport"] != "web":
+        raise _unsupported(row["transport"])
+    creds = creds_from_stored(row["config"])
+    if creds is None:
+        return _as_response(
+            ProbeResult(
+                False,
+                "this agent has no stored LiveKit credentials -- add an API key and secret",
+                error_code="bad_config",
+            )
+        )
+    return _as_response(await probe_livekit(creds))

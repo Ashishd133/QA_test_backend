@@ -108,7 +108,8 @@ async def _make_agent_and_suite(
             "config": {
                 "transport": "web",
                 "roomUrl": "https://example.livekit.cloud/room",
-                "token": "tok",
+                "apiKey": "APIkey",
+                "apiSecret": "secret",
             },
             "prompt": prompt,
             "description": description,

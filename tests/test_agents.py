@@ -20,7 +20,13 @@ pytestmark = requires_test_db
 
 _HEADERS = auth_headers()
 
-_WEB_CONFIG = {"transport": "web", "roomUrl": "https://example.livekit.cloud/room", "token": "tok"}
+_SECRET = "super-secret-never-returned"
+_WEB_CONFIG = {
+    "transport": "web",
+    "roomUrl": "https://example.livekit.cloud/room",
+    "apiKey": "APIkey",
+    "apiSecret": _SECRET,
+}
 
 
 async def _client() -> AsyncClient:
@@ -194,11 +200,66 @@ async def test_delete_agent_and_conflict_when_in_use() -> None:
         await engine.dispose()
 
 
-async def test_test_connection_pre_save_web_succeeds_sip_phone_not_supported() -> None:
+async def test_api_secret_is_never_returned_and_survives_patch_without_it() -> None:
+    engine = _test_engine()
     async with await _client() as client:
-        web_response = await client.post("/v1/agents/test-connection", json=_WEB_CONFIG)
-        assert web_response.status_code == 200
-        assert web_response.json()["success"] is True
+        create_response = await client.post(
+            "/v1/agents", json={"name": "Secret Agent", "config": _WEB_CONFIG}
+        )
+        assert create_response.status_code == 201
+        agent_id = create_response.json()["id"]
+        assert _SECRET not in create_response.text
+        assert create_response.json()["config"]["hasSecret"] is True
+        assert create_response.json()["config"]["apiKey"] == "APIkey"
+
+        # PATCH config without apiSecret keeps the stored one.
+        patch_response = await client.patch(
+            f"/v1/agents/{agent_id}",
+            json={"config": {**_WEB_CONFIG, "apiSecret": None, "agentName": "named-agent"}},
+        )
+        assert patch_response.status_code == 200
+        assert _SECRET not in patch_response.text
+        assert patch_response.json()["config"]["hasSecret"] is True
+        assert patch_response.json()["config"]["agentName"] == "named-agent"
+
+        get_response = await client.get(f"/v1/agents/{agent_id}")
+        assert _SECRET not in get_response.text
+
+        async with engine.connect() as conn:
+            stored = (
+                await conn.execute(
+                    text("SELECT config FROM agents WHERE id = :id"), {"id": uuid.UUID(agent_id)}
+                )
+            ).scalar_one()
+        assert _SECRET not in str(stored)
+        assert stored["secret"]["v"] == 1
+
+        # A web agent can't be created without a secret.
+        missing = await client.post(
+            "/v1/agents",
+            json={"name": "No Secret", "config": {**_WEB_CONFIG, "apiSecret": None}},
+        )
+        assert missing.status_code == 422
+    try:
+        await _cleanup(engine, uuid.UUID(agent_id))
+    finally:
+        await engine.dispose()
+
+
+async def test_test_connection_pre_save_reports_result_and_sip_phone_not_supported() -> None:
+    async with await _client() as client:
+        # Missing secret / garbage URL: a failed *test* is still a 200, with the reason.
+        no_secret = await client.post(
+            "/v1/agents/test-connection", json={**_WEB_CONFIG, "apiSecret": None}
+        )
+        assert no_secret.status_code == 200
+        assert no_secret.json()["errorCode"] == "bad_config"
+
+        bad_url = await client.post(
+            "/v1/agents/test-connection", json={**_WEB_CONFIG, "roomUrl": "not a url"}
+        )
+        assert bad_url.json()["success"] is False
+        assert bad_url.json()["errorCode"] == "bad_config"
 
         sip_response = await client.post(
             "/v1/agents/test-connection",

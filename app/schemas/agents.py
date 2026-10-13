@@ -39,9 +39,16 @@ class AgentHealth(APIModel):
 
 
 class WebConfig(APIModel):
+    """B3-01b: LiveKit credentials, not a pasted JWT -- Cadence mints a
+    fresh short-lived token per test/call. `api_secret` is write-only: it
+    is encrypted at rest and never returned (reads show `hasSecret`);
+    omitting it on PATCH keeps the stored one."""
+
     transport: Literal["web"] = "web"
     room_url: str
-    token: str
+    api_key: str
+    api_secret: str | None = None
+    agent_name: str | None = None
 
 
 class SipConfig(APIModel):
@@ -101,3 +108,5 @@ class TestConnectionResult(APIModel):
     success: bool
     rtt_ms: int | None = None
     detail: str
+    # B3-01: set iff success is False.
+    error_code: Literal["agent_unreachable", "auth_failed", "bad_config"] | None = None
