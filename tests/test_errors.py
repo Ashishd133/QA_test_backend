@@ -72,3 +72,23 @@ def test_unhandled_exception_envelope() -> None:
     assert response.json() == {
         "error": {"code": "internal_error", "message": "An unexpected error occurred"}
     }
+
+
+async def test_validation_errors_never_echo_the_submitted_input() -> None:
+    from httpx import ASGITransport, AsyncClient
+
+    from app.main import app
+    from tests.conftest import auth_headers
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test", headers=auth_headers()
+    ) as client:
+        response = await client.post(
+            "/v1/agents",
+            json={
+                "name": "x",
+                "config": {"transport": "web", "roomUrl": "wss://a", "apiSecret": "LEAKME"},
+            },
+        )
+    assert response.status_code == 422
+    assert "LEAKME" not in response.text

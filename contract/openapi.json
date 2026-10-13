@@ -3714,6 +3714,22 @@
             "title": "Detail",
             "type": "string"
           },
+          "errorCode": {
+            "anyOf": [
+              {
+                "enum": [
+                  "agent_unreachable",
+                  "auth_failed",
+                  "bad_config"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Errorcode"
+          },
           "rttMs": {
             "anyOf": [
               {
@@ -4000,13 +4016,36 @@
         "type": "object"
       },
       "WebConfig": {
+        "description": "B3-01b: LiveKit credentials, not a pasted JWT -- Cadence mints a\nfresh short-lived token per test/call. `api_secret` is write-only: it\nis encrypted at rest and never returned (reads show `hasSecret`);\nomitting it on PATCH keeps the stored one.",
         "properties": {
-          "roomUrl": {
-            "title": "Roomurl",
+          "agentName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agentname"
+          },
+          "apiKey": {
+            "title": "Apikey",
             "type": "string"
           },
-          "token": {
-            "title": "Token",
+          "apiSecret": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Apisecret"
+          },
+          "roomUrl": {
+            "title": "Roomurl",
             "type": "string"
           },
           "transport": {
@@ -4018,7 +4057,7 @@
         },
         "required": [
           "roomUrl",
-          "token"
+          "apiKey"
         ],
         "title": "WebConfig",
         "type": "object"

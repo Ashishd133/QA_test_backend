@@ -52,6 +52,7 @@ from app.engine.caller.persona import PersonaSpec, Turn
 from app.engine.caller.persona_call import CallEndReason, run_persona_call
 from app.engine.judge.judge import FinalJudge, IncrementalJudge, build_judge_client
 from app.engine.judge.models import AssertionSpec
+from app.engine.livekit_creds import LiveKitCreds, creds_from_stored
 from app.engine.metrics.compiler import (
     MetricOutcome,
     compile_metrics,
@@ -208,6 +209,17 @@ async def _load_scenario(
     )
 
 
+async def _load_livekit_creds(engine: AsyncEngine, agent_id: uuid.UUID) -> LiveKitCreds | None:
+    """B3-01b: the run's agent's own LiveKit credentials, or None (legacy /
+    credential-less agent: seeded agents, the reference agent) so
+    `run_persona_call` falls back to the server's `LIVEKIT_*` env."""
+    async with engine.connect() as conn:
+        config = (
+            await conn.execute(text("SELECT config FROM agents WHERE id = :id"), {"id": agent_id})
+        ).scalar_one_or_none()
+    return creds_from_stored(config) if isinstance(config, dict) else None
+
+
 async def _resolve_run_metrics(engine: AsyncEngine, agent_id: uuid.UUID) -> list[RowMapping]:
     """B2.7-06: resolved once per run (not once per metric), scoped to the
     agent's project. `resolve_metrics_for_agent` already applies the
@@ -350,6 +362,34 @@ async def _run_simulation_body(engine: AsyncEngine, claimed: ClaimedRun) -> None
         logger.exception(f"failed to resolve metrics for run {run_id}, scoring none")
         resolved_metrics = []
 
+    try:
+        livekit_creds = await _load_livekit_creds(engine, claimed.agent_id)
+    except Exception:
+        # Never log the config itself -- it holds an encrypted secret. A
+        # decrypt failure (e.g. missing FIELD_ENCRYPTION_KEYS on the
+        # worker) must fail this run loudly, not silently run the call
+        # against Cadence's own LiveKit project instead of the user's.
+        logger.exception(f"failed to load LiveKit credentials for run {run_id}")
+        async with engine.connect() as conn, conn.begin():
+            await emit(
+                conn,
+                run_id,
+                error_event(
+                    code="agent_credentials_unavailable",
+                    message="could not load this agent's LiveKit credentials",
+                    fatal=True,
+                ),
+            )
+            await conn.execute(
+                text(
+                    "UPDATE runs SET status = 'failed', ended_at = now(), "
+                    "end_reason = 'error' WHERE id = :id"
+                ),
+                {"id": run_id},
+            )
+            await maybe_close_parent(conn, run_id)
+        return
+
     async with engine.connect() as conn, conn.begin():
         await conn.execute(
             text("UPDATE runs SET status = 'running', started_at = now() WHERE id = :id"),
@@ -379,6 +419,7 @@ async def _run_simulation_body(engine: AsyncEngine, claimed: ClaimedRun) -> None
             cancel_event,
             cancel_watcher_task,
             heartbeat_task,
+            livekit_creds,
         )
 
 
@@ -394,6 +435,7 @@ async def _run_simulation_traced(
     cancel_event: asyncio.Event,
     cancel_watcher_task: asyncio.Task[None],
     heartbeat_task: asyncio.Task[None],
+    livekit_creds: LiveKitCreds | None,
 ) -> None:
     # From here on, heartbeat_task and cancel_watcher_task are live -- every
     # exit path (including the early `return`s below, and any exception
@@ -525,6 +567,7 @@ async def _run_simulation_traced(
                 latency_clock=latency_clock,
                 cancel_event=cancel_event,
                 run_id=run_id,
+                livekit=livekit_creds,
             )
         except Exception:
             logger.exception(f"persona call failed for run {run_id}")

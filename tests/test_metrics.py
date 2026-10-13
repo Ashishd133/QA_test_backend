@@ -87,7 +87,8 @@ async def _make_agent_and_scenario(client: AsyncClient, engine: AsyncEngine) -> 
             "config": {
                 "transport": "web",
                 "roomUrl": "https://example.livekit.cloud/room",
-                "token": "tok",
+                "apiKey": "APIkey",
+                "apiSecret": "secret",
             },
         },
     )

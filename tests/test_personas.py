@@ -185,7 +185,8 @@ async def test_delete_persona_conflict_when_referenced_and_builtin_refused() -> 
                 "config": {
                     "transport": "web",
                     "roomUrl": "https://example.livekit.cloud/room",
-                    "token": "tok",
+                    "apiKey": "APIkey",
+                    "apiSecret": "secret",
                 },
             },
         )
