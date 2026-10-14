@@ -211,6 +211,17 @@ def _run_cost(raw: dict[str, object] | None) -> RunCost | None:
     return RunCost.model_validate(raw) if raw else None
 
 
+# #37: a suite batch's parent row never gets its own scenario_id (only its
+# children do -- see suites.py's _INSERT_SUITE_PARENT_SQL), so a plain
+# sc.suite_id join leaves the parent's suite blank. Fall back to any one
+# child's scenario's suite, same idea as rollup._BATCH_RUBRIC_SQL. Only the
+# suite is resolved this way -- scenario/persona stay the row's own.
+_SUITE_ID_EXPR = (
+    "COALESCE(sc.suite_id, (SELECT csc.suite_id FROM runs c "
+    "JOIN scenarios csc ON csc.id = c.scenario_id "
+    "WHERE c.parent_run_id = r.id LIMIT 1))"
+)
+
 _LIST_RUNS_SQL = text(
     "SELECT r.id, r.status, r.metrics, r.created_at, r.started_at, r.ended_at, "
     "       r.project_id, r.end_reason, r.cost, r.parent_run_id, r.trigger, "
@@ -218,7 +229,7 @@ _LIST_RUNS_SQL = text(
     "FROM runs r "
     "JOIN agents a ON a.id = r.agent_id "
     "LEFT JOIN scenarios sc ON sc.id = r.scenario_id "
-    "LEFT JOIN suites s ON s.id = sc.suite_id "
+    f"LEFT JOIN suites s ON s.id = {_SUITE_ID_EXPR} "
     "WHERE r.project_id = :project_id "
     "  AND (CAST(:type AS text) IS NULL OR r.type = CAST(:type AS text)) "
     "  AND (CAST(:agent_id AS uuid) IS NULL OR r.agent_id = CAST(:agent_id AS uuid)) "
@@ -441,7 +452,7 @@ _RUN_DETAIL_SQL = text(
     "FROM runs r "
     "JOIN agents a ON a.id = r.agent_id "
     "LEFT JOIN scenarios sc ON sc.id = r.scenario_id "
-    "LEFT JOIN suites s ON s.id = sc.suite_id "
+    f"LEFT JOIN suites s ON s.id = {_SUITE_ID_EXPR} "
     "LEFT JOIN personas p ON p.id = sc.persona_id "
     "WHERE r.id = :id"
 )

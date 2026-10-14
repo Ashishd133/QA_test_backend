@@ -426,3 +426,35 @@ async def test_suite_run_children_claim_and_run_at_exactly_max_concurrency() -> 
         assert max_observed == 3
     finally:
         await _cleanup_after_execution(engine, agent_id=agent_id)
+
+
+async def test_batch_parent_resolves_suite_name_and_suite_filter() -> None:
+    """#37: a batch parent has no scenario_id of its own, so its suite must
+    be resolved through a child -- in the list row, the detail, and the
+    `suiteId` filter alike."""
+    engine = _test_engine()
+    agent_id = await _make_agent(engine)
+    suite_id = await _make_suite(engine, agent_id, "Batch Suite 37")
+    await _make_scenario(engine, suite_id, "S1")
+    await _make_scenario(engine, suite_id, "S2")
+    try:
+        async with await _client() as client:
+            started = await client.post(
+                f"/v1/suites/{suite_id}/run", json={"agentId": str(agent_id)}
+            )
+            assert started.status_code == 202
+            parent_id = started.json()["parentRunId"]
+
+            listed = await client.get("/v1/runs", params={"isParent": "true"})
+            filtered = await client.get(
+                "/v1/runs", params={"isParent": "true", "suiteId": str(suite_id)}
+            )
+            detail = await client.get(f"/v1/runs/{parent_id}")
+        row = next(r for r in listed.json() if r["id"] == parent_id)
+        assert row["suite"] == "Batch Suite 37"
+        assert parent_id in {r["id"] for r in filtered.json()}
+        assert detail.json()["suiteName"] == "Batch Suite 37"
+        # Scenario identity stays the row's own: a parent has none.
+        assert detail.json()["scenarioName"] == ""
+    finally:
+        await _cleanup_after_execution(engine, agent_id=agent_id)
