@@ -2499,6 +2499,10 @@
       "RunDeltaRow": {
         "description": "B2.5-05: `?fields=light`'s row shape -- only what the call queue\nrepaints on each poll. Deliberately excludes everything RunDetail has\nthat a queue row doesn't need (transcript, cost breakdown, ...) --\nthat's the entire cost saving this endpoint exists for.",
         "properties": {
+          "agentName": {
+            "title": "Agentname",
+            "type": "string"
+          },
           "durationMs": {
             "anyOf": [
               {
@@ -2536,6 +2540,28 @@
             ],
             "title": "Latencyp95"
           },
+          "persona": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Persona"
+          },
+          "scenarioName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scenarioname"
+          },
           "score": {
             "anyOf": [
               {
@@ -2566,6 +2592,9 @@
         "required": [
           "id",
           "status",
+          "scenarioName",
+          "persona",
+          "agentName",
           "score",
           "turns",
           "durationMs",

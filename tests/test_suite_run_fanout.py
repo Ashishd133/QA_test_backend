@@ -458,3 +458,29 @@ async def test_batch_parent_resolves_suite_name_and_suite_filter() -> None:
         assert detail.json()["scenarioName"] == ""
     finally:
         await _cleanup_after_execution(engine, agent_id=agent_id)
+
+
+async def test_delta_rows_carry_scenario_persona_and_agent_identity() -> None:
+    """#19: the fields=light polling rows label each call without a second
+    fetch."""
+    engine = _test_engine()
+    agent_id = await _make_agent(engine, "Identity Agent")
+    suite_id = await _make_suite(engine, agent_id, "Identity Suite")
+    await _make_scenario(engine, suite_id, "Identity Scenario")
+    try:
+        async with await _client() as client:
+            started = await client.post(
+                f"/v1/suites/{suite_id}/run", json={"agentId": str(agent_id)}
+            )
+            assert started.status_code == 202
+            delta = await client.get(
+                "/v1/runs",
+                params={"parentRunId": started.json()["parentRunId"], "fields": "light"},
+            )
+        assert delta.status_code == 200
+        (row,) = delta.json()["calls"]
+        assert row["agentName"] == "Identity Agent"
+        assert row["scenarioName"] == "Identity Scenario"
+        assert isinstance(row["persona"], str) and row["persona"]
+    finally:
+        await _cleanup_after_execution(engine, agent_id=agent_id)

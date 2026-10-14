@@ -281,10 +281,14 @@ _DELTA_STATE_SQL = text(
 
 _DELTA_ROWS_SQL = text(
     "SELECT r.id, r.status, r.metrics, r.started_at, r.ended_at, "
+    "       a.name AS agent_name, sc.name AS scenario_name, p.name AS persona, "
     "       (SELECT count(*) FROM turns t WHERE t.run_id = r.id) AS turn_count, "
     "       (SELECT percentile_cont(0.95) WITHIN GROUP (ORDER BY t.latency_ms) "
     "        FROM turns t WHERE t.run_id = r.id AND t.latency_ms IS NOT NULL) AS latency_p95 "
     "FROM runs r "
+    "JOIN agents a ON a.id = r.agent_id "
+    "LEFT JOIN scenarios sc ON sc.id = r.scenario_id "
+    "LEFT JOIN personas p ON p.id = sc.persona_id "
     "WHERE r.parent_run_id = :parent_run_id AND r.project_id = :project_id "
     "  AND (CAST(:since AS timestamptz) IS NULL "
     "       OR r.updated_at > CAST(:since AS timestamptz)) "
@@ -311,6 +315,9 @@ def _run_delta_row(row: RowMapping) -> RunDeltaRow:
     return RunDeltaRow(
         id=str(row["id"]),
         status=row["status"],
+        scenario_name=row["scenario_name"],
+        persona=row["persona"],
+        agent_name=row["agent_name"],
         score=score if isinstance(score, int | float) else None,
         turns=row["turn_count"],
         duration_ms=duration_ms,

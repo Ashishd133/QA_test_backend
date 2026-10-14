@@ -105,6 +105,12 @@ class RunDeltaRow(APIModel):
 
     id: str
     status: str
+    # #19: per-call identity, so the live queue table can label each row
+    # without a second fetch. scenario_name/persona are None for a call
+    # with no scenario (or a scenario with no persona).
+    scenario_name: str | None
+    persona: str | None
+    agent_name: str
     score: float | None
     turns: int | None
     duration_ms: int | None

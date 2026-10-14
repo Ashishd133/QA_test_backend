@@ -109,12 +109,18 @@ async def test_delta_returns_light_rows_and_aggregate() -> None:
         assert set(row.keys()) == {
             "id",
             "status",
+            "scenarioName",
+            "persona",
+            "agentName",
             "score",
             "turns",
             "durationMs",
             "latencyP95",
             "goalMet",
         }
+        assert row["agentName"] == "Delta Agent"
+        assert row["scenarioName"] is None
+        assert row["persona"] is None
         assert row["score"] == 0.9
         assert row["goalMet"] is None
         assert body["aggregate"]["callCount"] == 1
