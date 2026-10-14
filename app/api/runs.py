@@ -22,6 +22,10 @@ from app.deps import ensure_project_match, require_project_id, require_user_id
 from app.errors import APIError
 from app.formatting import format_duration
 from app.gcp_auth import signed_recording_url
+from app.schemas.errors import (
+    BATCH_TOO_LARGE_RESPONSE,
+    CONCURRENCY_LIMIT_RESPONSE,
+)
 from app.schemas.runs import (
     DashboardRunRow,
     DiscoveryRunCreate,
@@ -822,7 +826,10 @@ async def _create_run(
 
 
 @router.post(
-    "/v1/simulations/runs", response_model=RunCreateResponse, status_code=status.HTTP_202_ACCEPTED
+    "/v1/simulations/runs",
+    response_model=RunCreateResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    responses=CONCURRENCY_LIMIT_RESPONSE,
 )
 async def create_simulation_run(
     body: SimulationRunCreate,
@@ -864,7 +871,10 @@ async def create_simulation_run(
 
 
 @router.post(
-    "/v1/discovery/runs", response_model=RunCreateResponse, status_code=status.HTTP_202_ACCEPTED
+    "/v1/discovery/runs",
+    response_model=RunCreateResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    responses=CONCURRENCY_LIMIT_RESPONSE,
 )
 async def create_discovery_run(
     body: DiscoveryRunCreate,
@@ -931,7 +941,10 @@ async def create_discovery_run(
 
 
 @router.post(
-    "/v1/redteam/runs", response_model=RunCreateResponse, status_code=status.HTTP_202_ACCEPTED
+    "/v1/redteam/runs",
+    response_model=RunCreateResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    responses=CONCURRENCY_LIMIT_RESPONSE,
 )
 async def create_redteam_run(
     body: RedteamRunCreate,
@@ -1072,6 +1085,7 @@ _INSERT_RERUN_CHILD_SQL = text(
     "/v1/runs/{run_id}/rerun",
     response_model=RunCreateResponse | SuiteRunCreateResponse,
     status_code=status.HTTP_202_ACCEPTED,
+    responses={**CONCURRENCY_LIMIT_RESPONSE, **BATCH_TOO_LARGE_RESPONSE},
 )
 async def rerun_run(
     run_id: uuid.UUID,
