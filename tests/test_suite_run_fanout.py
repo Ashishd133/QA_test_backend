@@ -426,3 +426,66 @@ async def test_suite_run_children_claim_and_run_at_exactly_max_concurrency() -> 
         assert max_observed == 3
     finally:
         await _cleanup_after_execution(engine, agent_id=agent_id)
+
+
+async def test_batch_parent_resolves_suite_name_and_suite_filter() -> None:
+    """#37: a batch parent has no scenario_id of its own, so its suite must
+    be resolved through a child -- in the list row, the detail, and the
+    `suiteId` filter alike."""
+    engine = _test_engine()
+    agent_id = await _make_agent(engine)
+    suite_id = await _make_suite(engine, agent_id, "Batch Suite 37")
+    await _make_scenario(engine, suite_id, "S1")
+    await _make_scenario(engine, suite_id, "S2")
+    try:
+        async with await _client() as client:
+            started = await client.post(
+                f"/v1/suites/{suite_id}/run", json={"agentId": str(agent_id)}
+            )
+            assert started.status_code == 202
+            parent_id = started.json()["parentRunId"]
+
+            listed = await client.get("/v1/runs", params={"isParent": "true"})
+            filtered = await client.get(
+                "/v1/runs", params={"isParent": "true", "suiteId": str(suite_id)}
+            )
+            detail = await client.get(f"/v1/runs/{parent_id}")
+        row = next(r for r in listed.json() if r["id"] == parent_id)
+        assert row["suite"] == "Batch Suite 37"
+        # #20: the History table's own columns.
+        assert row["title"] == "Suite Run"
+        assert row["callCount"] == 2
+        assert row["latencyP95Ms"] is None  # no turns yet
+        assert isinstance(row["createdAt"], str) and row["createdAt"]
+        assert parent_id in {r["id"] for r in filtered.json()}
+        assert detail.json()["suiteName"] == "Batch Suite 37"
+        # Scenario identity stays the row's own: a parent has none.
+        assert detail.json()["scenarioName"] == ""
+    finally:
+        await _cleanup_after_execution(engine, agent_id=agent_id)
+
+
+async def test_delta_rows_carry_scenario_persona_and_agent_identity() -> None:
+    """#19: the fields=light polling rows label each call without a second
+    fetch."""
+    engine = _test_engine()
+    agent_id = await _make_agent(engine, "Identity Agent")
+    suite_id = await _make_suite(engine, agent_id, "Identity Suite")
+    await _make_scenario(engine, suite_id, "Identity Scenario")
+    try:
+        async with await _client() as client:
+            started = await client.post(
+                f"/v1/suites/{suite_id}/run", json={"agentId": str(agent_id)}
+            )
+            assert started.status_code == 202
+            delta = await client.get(
+                "/v1/runs",
+                params={"parentRunId": started.json()["parentRunId"], "fields": "light"},
+            )
+        assert delta.status_code == 200
+        (row,) = delta.json()["calls"]
+        assert row["agentName"] == "Identity Agent"
+        assert row["scenarioName"] == "Identity Scenario"
+        assert isinstance(row["persona"], str) and row["persona"]
+    finally:
+        await _cleanup_after_execution(engine, agent_id=agent_id)

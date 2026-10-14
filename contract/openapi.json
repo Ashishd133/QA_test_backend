@@ -297,6 +297,45 @@
         "title": "AgentUpdate",
         "type": "object"
       },
+      "ApiErrorBody": {
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "details": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Details"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "title": "ApiErrorBody",
+        "type": "object"
+      },
+      "ApiErrorResponse": {
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/ApiErrorBody"
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "title": "ApiErrorResponse",
+        "type": "object"
+      },
       "AssertionData": {
         "properties": {
           "assertionId": {
@@ -676,6 +715,10 @@
             "title": "Agent",
             "type": "string"
           },
+          "callCount": {
+            "title": "Callcount",
+            "type": "integer"
+          },
           "cost": {
             "anyOf": [
               {
@@ -685,6 +728,10 @@
                 "type": "null"
               }
             ]
+          },
+          "createdAt": {
+            "title": "Createdat",
+            "type": "string"
           },
           "duration": {
             "title": "Duration",
@@ -716,6 +763,17 @@
           "isParent": {
             "title": "Isparent",
             "type": "boolean"
+          },
+          "latencyP95Ms": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latencyp95Ms"
           },
           "parentRunId": {
             "anyOf": [
@@ -754,6 +812,10 @@
             "title": "Suite",
             "type": "string"
           },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
           "trigger": {
             "enum": [
               "manual",
@@ -775,7 +837,10 @@
           "runId",
           "projectId",
           "isParent",
-          "trigger"
+          "trigger",
+          "title",
+          "callCount",
+          "createdAt"
         ],
         "title": "DashboardRunRow",
         "type": "object"
@@ -2499,6 +2564,10 @@
       "RunDeltaRow": {
         "description": "B2.5-05: `?fields=light`'s row shape -- only what the call queue\nrepaints on each poll. Deliberately excludes everything RunDetail has\nthat a queue row doesn't need (transcript, cost breakdown, ...) --\nthat's the entire cost saving this endpoint exists for.",
         "properties": {
+          "agentName": {
+            "title": "Agentname",
+            "type": "string"
+          },
           "durationMs": {
             "anyOf": [
               {
@@ -2536,6 +2605,28 @@
             ],
             "title": "Latencyp95"
           },
+          "persona": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Persona"
+          },
+          "scenarioName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scenarioname"
+          },
           "score": {
             "anyOf": [
               {
@@ -2566,6 +2657,9 @@
         "required": [
           "id",
           "status",
+          "scenarioName",
+          "persona",
+          "agentName",
           "score",
           "turns",
           "durationMs",
@@ -4432,6 +4526,16 @@
             },
             "description": "Successful Response"
           },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "`concurrency_limit`: the agent already has `maxConcurrency` live runs. `error.details.retryAfterMs` is the suggested retry delay."
+          },
           "422": {
             "content": {
               "application/json": {
@@ -5334,6 +5438,16 @@
             },
             "description": "Successful Response"
           },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "`concurrency_limit`: the agent already has `maxConcurrency` live runs. `error.details.retryAfterMs` is the suggested retry delay."
+          },
           "422": {
             "content": {
               "application/json": {
@@ -5669,15 +5783,25 @@
             },
             "description": "Successful Response"
           },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "`concurrency_limit`: the agent already has `maxConcurrency` live runs. `error.details.retryAfterMs` is the suggested retry delay."
+          },
           "422": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ApiErrorResponse"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "`validation_error` (bad body, empty suite/batch), `not_supported` (personaIds/conditionProfileIds), or `batch_too_large` (the batch would queue more calls than `suite_run_batch_cap`)."
           }
         },
         "summary": "Rerun Run",
@@ -5909,6 +6033,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "`concurrency_limit`: the agent already has `maxConcurrency` live runs. `error.details.retryAfterMs` is the suggested retry delay."
           },
           "422": {
             "content": {
@@ -6222,11 +6356,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ApiErrorResponse"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "`validation_error` (bad body, empty suite/batch), `not_supported` (personaIds/conditionProfileIds), or `batch_too_large` (the batch would queue more calls than `suite_run_batch_cap`)."
           }
         },
         "summary": "Run Suite",

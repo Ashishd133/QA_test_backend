@@ -22,6 +22,10 @@ from app.deps import ensure_project_match, require_project_id, require_user_id
 from app.errors import APIError
 from app.formatting import format_duration
 from app.gcp_auth import signed_recording_url
+from app.schemas.errors import (
+    BATCH_TOO_LARGE_RESPONSE,
+    CONCURRENCY_LIMIT_RESPONSE,
+)
 from app.schemas.runs import (
     DashboardRunRow,
     DiscoveryRunCreate,
@@ -211,14 +215,30 @@ def _run_cost(raw: dict[str, object] | None) -> RunCost | None:
     return RunCost.model_validate(raw) if raw else None
 
 
+# #37: a suite batch's parent row never gets its own scenario_id (only its
+# children do -- see suites.py's _INSERT_SUITE_PARENT_SQL), so a plain
+# sc.suite_id join leaves the parent's suite blank. Fall back to any one
+# child's scenario's suite, same idea as rollup._BATCH_RUBRIC_SQL. Only the
+# suite is resolved this way -- scenario/persona stay the row's own.
+_SUITE_ID_EXPR = (
+    "COALESCE(sc.suite_id, (SELECT csc.suite_id FROM runs c "
+    "JOIN scenarios csc ON csc.id = c.scenario_id "
+    "WHERE c.parent_run_id = r.id LIMIT 1))"
+)
+
 _LIST_RUNS_SQL = text(
     "SELECT r.id, r.status, r.metrics, r.created_at, r.started_at, r.ended_at, "
     "       r.project_id, r.end_reason, r.cost, r.parent_run_id, r.trigger, "
-    "       a.name AS agent_name, s.name AS suite_name "
+    "       r.type, a.name AS agent_name, s.name AS suite_name, sc.name AS scenario_name, "
+    "       GREATEST((SELECT count(*) FROM runs c WHERE c.parent_run_id = r.id), 1) "
+    "         AS call_count, "
+    "       (SELECT percentile_cont(0.95) WITHIN GROUP (ORDER BY t.latency_ms) "
+    "        FROM turns t WHERE t.latency_ms IS NOT NULL AND (t.run_id = r.id OR t.run_id IN "
+    "         (SELECT c.id FROM runs c WHERE c.parent_run_id = r.id))) AS latency_p95 "
     "FROM runs r "
     "JOIN agents a ON a.id = r.agent_id "
     "LEFT JOIN scenarios sc ON sc.id = r.scenario_id "
-    "LEFT JOIN suites s ON s.id = sc.suite_id "
+    f"LEFT JOIN suites s ON s.id = {_SUITE_ID_EXPR} "
     "WHERE r.project_id = :project_id "
     "  AND (CAST(:type AS text) IS NULL OR r.type = CAST(:type AS text)) "
     "  AND (CAST(:agent_id AS uuid) IS NULL OR r.agent_id = CAST(:agent_id AS uuid)) "
@@ -256,6 +276,10 @@ def _dashboard_run_row(row: RowMapping) -> DashboardRunRow:
         is_parent=row["parent_run_id"] is None,
         parent_run_id=str(row["parent_run_id"]) if row["parent_run_id"] is not None else None,
         trigger=row["trigger"],
+        title=_run_title(row["type"], row["scenario_name"]),
+        call_count=row["call_count"],
+        latency_p95_ms=row["latency_p95"],
+        created_at=_isoformat(row["created_at"]),
     )
 
 
@@ -270,10 +294,14 @@ _DELTA_STATE_SQL = text(
 
 _DELTA_ROWS_SQL = text(
     "SELECT r.id, r.status, r.metrics, r.started_at, r.ended_at, "
+    "       a.name AS agent_name, sc.name AS scenario_name, p.name AS persona, "
     "       (SELECT count(*) FROM turns t WHERE t.run_id = r.id) AS turn_count, "
     "       (SELECT percentile_cont(0.95) WITHIN GROUP (ORDER BY t.latency_ms) "
     "        FROM turns t WHERE t.run_id = r.id AND t.latency_ms IS NOT NULL) AS latency_p95 "
     "FROM runs r "
+    "JOIN agents a ON a.id = r.agent_id "
+    "LEFT JOIN scenarios sc ON sc.id = r.scenario_id "
+    "LEFT JOIN personas p ON p.id = sc.persona_id "
     "WHERE r.parent_run_id = :parent_run_id AND r.project_id = :project_id "
     "  AND (CAST(:since AS timestamptz) IS NULL "
     "       OR r.updated_at > CAST(:since AS timestamptz)) "
@@ -300,6 +328,9 @@ def _run_delta_row(row: RowMapping) -> RunDeltaRow:
     return RunDeltaRow(
         id=str(row["id"]),
         status=row["status"],
+        scenario_name=row["scenario_name"],
+        persona=row["persona"],
+        agent_name=row["agent_name"],
         score=score if isinstance(score, int | float) else None,
         turns=row["turn_count"],
         duration_ms=duration_ms,
@@ -441,7 +472,7 @@ _RUN_DETAIL_SQL = text(
     "FROM runs r "
     "JOIN agents a ON a.id = r.agent_id "
     "LEFT JOIN scenarios sc ON sc.id = r.scenario_id "
-    "LEFT JOIN suites s ON s.id = sc.suite_id "
+    f"LEFT JOIN suites s ON s.id = {_SUITE_ID_EXPR} "
     "LEFT JOIN personas p ON p.id = sc.persona_id "
     "WHERE r.id = :id"
 )
@@ -795,7 +826,10 @@ async def _create_run(
 
 
 @router.post(
-    "/v1/simulations/runs", response_model=RunCreateResponse, status_code=status.HTTP_202_ACCEPTED
+    "/v1/simulations/runs",
+    response_model=RunCreateResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    responses=CONCURRENCY_LIMIT_RESPONSE,
 )
 async def create_simulation_run(
     body: SimulationRunCreate,
@@ -837,7 +871,10 @@ async def create_simulation_run(
 
 
 @router.post(
-    "/v1/discovery/runs", response_model=RunCreateResponse, status_code=status.HTTP_202_ACCEPTED
+    "/v1/discovery/runs",
+    response_model=RunCreateResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    responses=CONCURRENCY_LIMIT_RESPONSE,
 )
 async def create_discovery_run(
     body: DiscoveryRunCreate,
@@ -904,7 +941,10 @@ async def create_discovery_run(
 
 
 @router.post(
-    "/v1/redteam/runs", response_model=RunCreateResponse, status_code=status.HTTP_202_ACCEPTED
+    "/v1/redteam/runs",
+    response_model=RunCreateResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    responses=CONCURRENCY_LIMIT_RESPONSE,
 )
 async def create_redteam_run(
     body: RedteamRunCreate,
@@ -1045,6 +1085,7 @@ _INSERT_RERUN_CHILD_SQL = text(
     "/v1/runs/{run_id}/rerun",
     response_model=RunCreateResponse | SuiteRunCreateResponse,
     status_code=status.HTTP_202_ACCEPTED,
+    responses={**CONCURRENCY_LIMIT_RESPONSE, **BATCH_TOO_LARGE_RESPONSE},
 )
 async def rerun_run(
     run_id: uuid.UUID,

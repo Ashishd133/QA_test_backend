@@ -19,6 +19,7 @@ from app.engine.judge.judge import GenAIClient, build_judge_client
 from app.engine.metrics.resolver import resolve_metrics_for_agent
 from app.errors import APIError
 from app.formatting import relative_time
+from app.schemas.errors import BATCH_TOO_LARGE_RESPONSE
 from app.schemas.suites import (
     GeneratedDraftSummary,
     ScenarioCreateRequest,
@@ -463,6 +464,7 @@ _INSERT_CHILD_RUN_SQL = text(
     "/v1/suites/{suite_id}/run",
     response_model=SuiteRunCreateResponse,
     status_code=status.HTTP_202_ACCEPTED,
+    responses=BATCH_TOO_LARGE_RESPONSE,
 )
 async def run_suite(
     suite_id: uuid.UUID,

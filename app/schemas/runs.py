@@ -74,6 +74,13 @@ class DashboardRunRow(APIModel):
     is_parent: bool
     parent_run_id: str | None = None
     trigger: Trigger
+    # #20: the History table's own columns. Same sources as RunDetail
+    # (`title`, `created_at`) and the aggregate (`call_count`, p95 over the
+    # run's own turns, or its children's for a batch parent).
+    title: str
+    call_count: int
+    latency_p95_ms: float | None = None
+    created_at: str
 
 
 class RunAggregate(APIModel):
@@ -105,6 +112,12 @@ class RunDeltaRow(APIModel):
 
     id: str
     status: str
+    # #19: per-call identity, so the live queue table can label each row
+    # without a second fetch. scenario_name/persona are None for a call
+    # with no scenario (or a scenario with no persona).
+    scenario_name: str | None
+    persona: str | None
+    agent_name: str
     score: float | None
     turns: int | None
     duration_ms: int | None

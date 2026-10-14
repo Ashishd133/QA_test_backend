@@ -22,3 +22,22 @@ def test_committed_contract_matches_current_schema() -> None:
         "contract/openapi.json is stale — run `uv run python -m scripts.export_openapi` "
         "and commit the result"
     )
+
+
+def test_runtime_error_codes_are_declared_on_the_endpoints_that_raise_them() -> None:
+    """#21: concurrency_limit (409) and batch_too_large (422) were real
+    runtime behavior the contract never mentioned."""
+    paths = json.loads(render_schema())["paths"]
+    envelope = "#/components/schemas/ApiErrorResponse"
+
+    def ref(path: str, code: str) -> str:
+        return paths[path]["post"]["responses"][code]["content"]["application/json"]["schema"][
+            "$ref"
+        ]
+
+    for path in ("/v1/simulations/runs", "/v1/discovery/runs", "/v1/redteam/runs"):
+        assert ref(path, "409") == envelope
+    assert ref("/v1/runs/{run_id}/rerun", "409") == envelope
+    assert ref("/v1/runs/{run_id}/rerun", "422") == envelope
+    assert ref("/v1/suites/{suite_id}/run", "422") == envelope
+    assert "409" not in paths["/v1/suites/{suite_id}/run"]["post"]["responses"]
