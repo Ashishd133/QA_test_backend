@@ -225,7 +225,12 @@ _SUITE_ID_EXPR = (
 _LIST_RUNS_SQL = text(
     "SELECT r.id, r.status, r.metrics, r.created_at, r.started_at, r.ended_at, "
     "       r.project_id, r.end_reason, r.cost, r.parent_run_id, r.trigger, "
-    "       a.name AS agent_name, s.name AS suite_name "
+    "       r.type, a.name AS agent_name, s.name AS suite_name, sc.name AS scenario_name, "
+    "       GREATEST((SELECT count(*) FROM runs c WHERE c.parent_run_id = r.id), 1) "
+    "         AS call_count, "
+    "       (SELECT percentile_cont(0.95) WITHIN GROUP (ORDER BY t.latency_ms) "
+    "        FROM turns t WHERE t.latency_ms IS NOT NULL AND (t.run_id = r.id OR t.run_id IN "
+    "         (SELECT c.id FROM runs c WHERE c.parent_run_id = r.id))) AS latency_p95 "
     "FROM runs r "
     "JOIN agents a ON a.id = r.agent_id "
     "LEFT JOIN scenarios sc ON sc.id = r.scenario_id "
@@ -267,6 +272,10 @@ def _dashboard_run_row(row: RowMapping) -> DashboardRunRow:
         is_parent=row["parent_run_id"] is None,
         parent_run_id=str(row["parent_run_id"]) if row["parent_run_id"] is not None else None,
         trigger=row["trigger"],
+        title=_run_title(row["type"], row["scenario_name"]),
+        call_count=row["call_count"],
+        latency_p95_ms=row["latency_p95"],
+        created_at=_isoformat(row["created_at"]),
     )
 
 

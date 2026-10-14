@@ -676,6 +676,10 @@
             "title": "Agent",
             "type": "string"
           },
+          "callCount": {
+            "title": "Callcount",
+            "type": "integer"
+          },
           "cost": {
             "anyOf": [
               {
@@ -685,6 +689,10 @@
                 "type": "null"
               }
             ]
+          },
+          "createdAt": {
+            "title": "Createdat",
+            "type": "string"
           },
           "duration": {
             "title": "Duration",
@@ -716,6 +724,17 @@
           "isParent": {
             "title": "Isparent",
             "type": "boolean"
+          },
+          "latencyP95Ms": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latencyp95Ms"
           },
           "parentRunId": {
             "anyOf": [
@@ -754,6 +773,10 @@
             "title": "Suite",
             "type": "string"
           },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
           "trigger": {
             "enum": [
               "manual",
@@ -775,7 +798,10 @@
           "runId",
           "projectId",
           "isParent",
-          "trigger"
+          "trigger",
+          "title",
+          "callCount",
+          "createdAt"
         ],
         "title": "DashboardRunRow",
         "type": "object"

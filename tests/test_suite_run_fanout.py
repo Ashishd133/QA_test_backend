@@ -452,6 +452,11 @@ async def test_batch_parent_resolves_suite_name_and_suite_filter() -> None:
             detail = await client.get(f"/v1/runs/{parent_id}")
         row = next(r for r in listed.json() if r["id"] == parent_id)
         assert row["suite"] == "Batch Suite 37"
+        # #20: the History table's own columns.
+        assert row["title"] == "Suite Run"
+        assert row["callCount"] == 2
+        assert row["latencyP95Ms"] is None  # no turns yet
+        assert isinstance(row["createdAt"], str) and row["createdAt"]
         assert parent_id in {r["id"] for r in filtered.json()}
         assert detail.json()["suiteName"] == "Batch Suite 37"
         # Scenario identity stays the row's own: a parent has none.

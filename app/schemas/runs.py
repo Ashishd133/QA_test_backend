@@ -74,6 +74,13 @@ class DashboardRunRow(APIModel):
     is_parent: bool
     parent_run_id: str | None = None
     trigger: Trigger
+    # #20: the History table's own columns. Same sources as RunDetail
+    # (`title`, `created_at`) and the aggregate (`call_count`, p95 over the
+    # run's own turns, or its children's for a batch parent).
+    title: str
+    call_count: int
+    latency_p95_ms: float | None = None
+    created_at: str
 
 
 class RunAggregate(APIModel):
