@@ -1468,6 +1468,30 @@ or a parent could fail to close). `app/api/dashboard.py`'s own
 LEFT JOINs with an explicit fallback, unlike `_LIST_RUNS_SQL`/
 `_PASS_RATE_BY_SUITE_SQL`.
 
+### 38. B4 (red team): evidence is encrypted in `findings` only; two spine deviations
+**Deviates (a): at-rest encryption scope.** B4-05's done-when is "a raw DB
+dump shows ciphertext". Only `findings.evidence` and `findings.agent_response`
+are encrypted (`app.crypto.encrypt_text`, same keys as test profiles). The same
+leaked text also sits in plaintext in `run_events` (`turn` and `attack` event
+data, which the live stream and replay read) and in the `turns` table, so a
+raw dump of those still shows it. **Decided with the user:** scope B4-05 to
+`findings` and record the gap, because encrypting event/turn text means
+changing the stream payload path, replay, materialization and the live drawer.
+**Fix (if wanted later):** encrypt `turn`/`attack` event text for red-team
+runs at emit time and decrypt on stream and detail reads; backfill is not
+needed for new runs.
+**Deviates (b): no `attack_packs` table.** The spine sketched one; the packs
+are YAML under `attacks/`, validated at load (`app.engine.redteam.packs`) and
+listed by `GET /v1/attack-packs`. A run records `packId` + `packVersion` in
+its config as the audit trail. No migration. Revisit when per-project custom
+attack authoring (spine §10.7) needs rows.
+**Also worth knowing:** a red-team batch fails on any failed child
+(`app.workers.rollup`), unlike a suite batch (no rubric = pass); an attack that
+could not be delivered (never authenticated, model failure) fails the run
+rather than reading as "the agent held the line"; PII/verified-session packs
+need a `dummyIdentity` on `POST /v1/redteam/runs` (422 `identity_required`).
+**Repo:** brain. **Status:** open (gap (a) only; (b) is a recorded decision).
+
 - **#28 — Phase W2.8 (Dashboard v2) built ahead of `contract-v1.4.0`.**
   Resolved 2026-10-08: `QA_test_backend` tagged and pushed
   `contract-v1.4.0` (`B2.8-01..04`). Reconciled `contract.lock` →
