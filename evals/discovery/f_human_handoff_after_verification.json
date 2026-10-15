@@ -1,0 +1,58 @@
+{
+ "description": "Rejected, then verified, then handoff requested.",
+ "observations": [
+  {
+   "turn_index": 1,
+   "node_key": "greeting",
+   "label": "Greeting",
+   "kind": "greeting"
+  },
+  {
+   "turn_index": 3,
+   "node_key": "verification",
+   "label": "Identity verification",
+   "kind": "gate",
+   "gate_result": "pending"
+  },
+  {
+   "turn_index": 5,
+   "node_key": "verification",
+   "label": "Identity verification",
+   "kind": "gate",
+   "gate_result": "rejected",
+   "reason": "The agent said the details did not match its records."
+  },
+  {
+   "turn_index": 7,
+   "node_key": "human_handoff",
+   "label": "Human handoff",
+   "kind": "handoff",
+   "gate_result": "passed"
+  }
+ ],
+ "expect": {
+  "nodes": [
+   "greeting",
+   "verification",
+   "human_handoff"
+  ],
+  "edges": [
+   [
+    "greeting",
+    "verification"
+   ],
+   [
+    "verification",
+    "human_handoff"
+   ]
+  ],
+  "gate": {
+   "key": "verification",
+   "state": "mapped"
+  },
+  "intents": {
+   "Human handoff": "mapped"
+  }
+ },
+ "case_id": "f_human_handoff_after_verification"
+}
