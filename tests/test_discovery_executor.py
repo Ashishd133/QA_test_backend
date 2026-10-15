@@ -587,3 +587,25 @@ async def test_a_model_failure_mid_exploration_is_reported_not_passed_off_as_cle
         assert done["discoveryResult"]["unexplored"]  # type: ignore[index]
     finally:
         await _cleanup(engine, agent_id)
+
+
+async def test_flag_demo_replay_only_accepts_a_completed_discovery_run() -> None:
+    from scripts.flag_demo_replay import flag
+
+    engine = _test_engine()
+    agent_id = await _make_agent(engine)
+    try:
+        queued = await _start_run(engine, agent_id)  # claimed, not completed
+        assert await flag(engine, queued.id, on=True) == 1
+        assert await flag(engine, uuid.uuid4(), on=True) == 1  # no such run
+
+        source_id = await _insert_flagged_source(engine, agent_id)
+        assert await flag(engine, source_id, on=False) == 0
+        async with engine.connect() as conn:
+            config = (
+                await conn.execute(text("SELECT config FROM runs WHERE id = :r"), {"r": source_id})
+            ).scalar_one()
+        assert config["demoReplay"] is False
+        assert await flag(engine, source_id, on=True) == 0
+    finally:
+        await _cleanup(engine, agent_id)
