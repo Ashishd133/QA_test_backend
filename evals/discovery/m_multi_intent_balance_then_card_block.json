@@ -64,6 +64,10 @@
    ],
    [
     "balance_check",
+    "main_menu"
+   ],
+   [
+    "main_menu",
     "card_block"
    ],
    [

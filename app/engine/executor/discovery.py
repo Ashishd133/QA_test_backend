@@ -398,6 +398,6 @@ def _summarize(
         nodes_blocked=sum(1 for n in graph.nodes if n.state == "blocked"),
         intents_mapped=sum(1 for i in intents if i.state == "mapped"),
         intents_blocked=sum(1 for i in intents if i.state == "blocked"),
-        unexplored=[c for c in explorer.remaining if c.casefold() not in blocked_names],
+        unexplored=[c for c in explorer.unexplored if c.casefold() not in blocked_names],
         turns_used=explorer.caller_turns,
     )

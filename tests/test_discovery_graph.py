@@ -93,3 +93,51 @@ def test_layout_is_layered_and_stable_as_the_graph_grows() -> None:
     after = {n.key: (n.x, n.y) for n in graph.nodes}
     assert all(after[k] == v for k, v in before.items())
     assert after["a"][0] < after["b"][0] < after["c"][0]
+
+
+def test_consecutive_gate_questions_collapse_into_one_gate() -> None:
+    """Models key each identity question separately; the gate must still be
+    one node, with the verdict on it -- not N gates of which all but the
+    last are reported blocked."""
+    graph = FlowGraph()
+    graph.observe(0, TurnObservation(node_key="hi", label="Hi", kind="greeting"))
+    for i, key in enumerate(["ask_name", "ask_dob", "ask_phrase"], start=1):
+        graph.observe(
+            i, TurnObservation(node_key=key, label=key, kind="gate", gate_result="pending")
+        )
+    graph.observe(
+        4,
+        TurnObservation(node_key="bal", label="Balance", kind="intent", gate_result="passed"),
+    )
+    graph.finalize()
+    assert [n.key for n in graph.nodes] == ["hi", "ask_name", "bal"]
+    assert graph.nodes[1].state == "mapped"
+    assert graph.edges == [("hi", "ask_name"), ("ask_name", "bal")]
+
+
+def test_consecutive_intents_route_through_the_menu_when_there_is_one() -> None:
+    graph = FlowGraph()
+    steps = [
+        ("menu", "menu"),
+        ("bal", "intent"),
+        ("card", "intent"),
+        ("hours", "intent"),
+    ]
+    for i, (key, kind) in enumerate(steps):
+        graph.observe(i, TurnObservation(node_key=key, label=key.title(), kind=kind))  # type: ignore[arg-type]
+    assert sorted(graph.edges) == [
+        ("bal", "menu"),
+        ("card", "menu"),
+        ("menu", "bal"),
+        ("menu", "card"),
+        ("menu", "hours"),
+    ]
+    intents = {i.name: i.path for i in graph.intents()}
+    assert intents["Hours"] == "Menu → Hours"  # not Menu -> Bal -> Card -> Hours
+
+
+def test_consecutive_intents_chain_when_the_agent_never_showed_a_menu() -> None:
+    graph = FlowGraph()
+    for i, key in enumerate(["bal", "card"]):
+        graph.observe(i, TurnObservation(node_key=key, label=key.title(), kind="intent"))
+    assert graph.edges == [("bal", "card")]

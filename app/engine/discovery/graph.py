@@ -105,14 +105,38 @@ class FlowGraph:
 
     def observe(self, turn_index: int, obs: TurnObservation) -> ObserveResult:
         changed: list[str] = []
+        # Identity verification is one state however many questions it
+        # takes (name, then date of birth, then phrase...). Models tend to
+        # mint a key per question; consecutive gate observations are folded
+        # into the gate we are already in, so the outcome lands on one node.
+        here = self._nodes.get(self._current) if self._current is not None else None
+        if obs.kind == "gate" and here is not None and here.kind == "gate":
+            obs = obs.model_copy(update={"node_key": here.key, "label": here.label})
+        prev = self._current
+        returns_to_menu: str | None = None
+        # An intent reply usually ends with "anything else?", i.e. the agent
+        # is back at its menu even though that turn was classified as the
+        # intent. When the agent has shown a menu, route one topic to the
+        # next through it (intent -> menu -> next) instead of chaining
+        # topics, which would make every path as long as the call.
+        if obs.kind in ("intent", "handoff") and here is not None and here.kind == "intent":
+            menu = next((n for n in self._nodes.values() if n.kind == "menu"), None)
+            if menu is not None and obs.node_key != here.key:
+                returns_to_menu = menu.key
+                prev = menu.key
+
         node = self._nodes.get(obs.node_key)
         if node is None:
-            node = self._create(turn_index, obs)
+            node = self._create(turn_index, obs, prev)
             changed.append(node.key)
         else:
             node.visits += 1
 
-        prev = self._current
+        if returns_to_menu is not None and here is not None:
+            menu_node = self._nodes[returns_to_menu]
+            if here.key not in menu_node.incoming:
+                menu_node.incoming.append(here.key)
+                changed.append(menu_node.key)
         if prev is not None and prev != node.key and prev not in node.incoming:
             node.incoming.append(prev)
             if node.key not in changed:
@@ -177,8 +201,8 @@ class FlowGraph:
                 return node
         return None
 
-    def _create(self, turn_index: int, obs: TurnObservation) -> GraphNode:
-        parent = self._nodes.get(self._current) if self._current is not None else None
+    def _create(self, turn_index: int, obs: TurnObservation, parent_key: str | None) -> GraphNode:
+        parent = self._nodes.get(parent_key) if parent_key is not None else None
         depth = parent.depth + 1 if parent is not None else 0
         row = self._rows_per_depth.get(depth, 0)
         self._rows_per_depth[depth] = row + 1

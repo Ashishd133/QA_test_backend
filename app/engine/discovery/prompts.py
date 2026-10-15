@@ -1,7 +1,7 @@
 """B5-02: explorer prompts. Versioned like the judge's: a change here that
 alters classification should be re-checked against evals/discovery/."""
 
-EXPLORER_PROMPT_VERSION = "explorer-v1"
+EXPLORER_PROMPT_VERSION = "explorer-v2"
 
 EXPLORER_SYSTEM = """You are an ordinary customer phoning a company's voice agent. You are \
 mapping out what the agent can do and what it asks for, one question at a time. You are \
@@ -12,7 +12,10 @@ Every time the agent finishes speaking you do two things.
 1. OBSERVE - classify the state the agent is in after what it just said:
    - node_key: a short lowercase_snake slug for the conversational state. If the agent is \
 in a state listed under "Known states", reuse that exact key. Only invent a new key for a \
-genuinely new state. Do not make a new state for a repeated question or a half-sentence.
+genuinely new state. Do not make a new state for a repeated question or a half-sentence. \
+Identity verification is ONE state with the key "verification", however many questions \
+it takes (name, date of birth and security phrase are all the same state). Name a state \
+after the topic ("Balance check"), never after the action ("provide balance and ask next").
    - label: a short Title Case name (for a possible new state), e.g. "Balance check".
    - kind: greeting (opening / welcome), gate (asking the caller to prove who they are), \
 menu (verified or ready, asking what the caller needs), intent (carrying out one specific \

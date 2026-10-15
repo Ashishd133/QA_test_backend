@@ -135,7 +135,8 @@ async def test_handoff_ends_the_exploration() -> None:
 
 async def test_turn_budget_guarantees_termination() -> None:
     llm = ScriptedLLM([_out(_obs("main_menu", "menu")) for _ in range(20)])
-    caller = ExplorerCaller(llm, identity=IDENTITY, candidates=["Never reached"], turn_budget=4)
+    topics = [f"Topic {i}" for i in range(10)]  # enough that stalls can't end it first
+    caller = ExplorerCaller(llm, identity=IDENTITY, candidates=topics, turn_budget=4)
     turns = await _drive(caller, ["anything else?"] * 20)
     assert len(turns) == 3 and turns[-1] == (CLOSING_LINE, True)
 
@@ -177,3 +178,64 @@ async def test_planning_falls_back_to_defaults() -> None:
     assert await propose_candidates(llm, name="A", description="a bank bot", prompt=None) == list(
         DEFAULT_CANDIDATES
     )
+
+
+async def test_intent_reply_is_attributed_to_the_topic_we_asked_about() -> None:
+    """The model names the state its own way and never sets reached_candidate
+    (what happened against the live reference agent). The topic is still
+    credited, the node takes the candidate's name, and it is not asked twice."""
+    llm = ScriptedLLM(
+        [
+            _out(_obs("provide_balance_and_ask_next", "intent")),
+            _out(_obs("branch_hours_answer", "intent")),
+        ]
+    )
+    caller = ExplorerCaller(llm, identity=IDENTITY, candidates=["Check balance", "Branch hours"])
+    turns = await _drive(caller, ["your balance is 5", "we open at 9"])
+
+    assert caller.reached == ["Check balance", "Branch hours"]
+    assert [n.label for n in caller.graph.nodes] == ["Check balance", "Branch hours"]
+    assert [n.key for n in caller.graph.nodes] == ["check_balance", "branch_hours"]
+    assert "ASK about: 'Branch hours'" in llm.prompts[1]  # not 'Check balance' again
+    assert turns[-1] == (CLOSING_LINE, True)
+
+
+async def test_a_topic_the_agent_keeps_deflecting_is_abandoned_not_repeated_forever() -> None:
+    llm = ScriptedLLM(
+        [_out(_obs("main_menu", "menu")) for _ in range(2)] + [_out(_obs("hours", "intent"))]
+    )
+    caller = ExplorerCaller(llm, identity=IDENTITY, candidates=["Mortgages", "Hours"])
+    await _drive(caller, ["anything else?", "anything else?", "we open at 9"])
+    assert caller.unexplored == ["Mortgages"]
+    assert caller.reached == ["Hours"]
+    assert "ASK about: 'Hours'" in llm.prompts[2]
+
+
+async def test_identity_questions_do_not_count_against_the_topic() -> None:
+    gate = [_out(_obs(k, "gate", "pending")) for k in ("ask_name", "ask_dob", "ask_phrase")]
+    llm = ScriptedLLM([*gate, _out(_obs("x", "intent"))])
+    caller = ExplorerCaller(llm, identity=IDENTITY, candidates=["Check balance"])
+    await _drive(caller, ["name?", "dob?", "phrase?", "your balance is 5"])
+    assert caller.unexplored == [] and caller.reached == ["Check balance"]
+    # One gate node, however many questions the model keyed separately.
+    assert [n.kind for n in caller.graph.nodes].count("gate") == 1
+
+
+async def test_spontaneous_handoff_is_attributed_to_the_handoff_topic() -> None:
+    llm = ScriptedLLM([_out(_obs("escalation", "handoff"))])
+    caller = ExplorerCaller(
+        llm, identity=IDENTITY, candidates=["Check balance", "Talk to a human agent"]
+    )
+    await _drive(caller, ["connecting you to a specialist"])
+    assert caller.reached == ["Talk to a human agent"]
+    assert caller.remaining == ["Check balance"]
+
+
+async def test_directive_names_the_following_topic_so_a_just_answered_one_is_not_repeated() -> None:
+    llm = ScriptedLLM([_out(_obs("m", "menu"))])
+    caller = ExplorerCaller(llm, identity=IDENTITY, candidates=["Check balance", "Branch hours"])
+    await _drive(caller, ["hello"])
+    prompt = llm.prompts[0]
+    assert "just carried out 'Check balance'" in prompt
+    assert "instead ASK about: 'Branch hours'" in prompt
+    assert "Otherwise ASK about: 'Check balance'" in prompt

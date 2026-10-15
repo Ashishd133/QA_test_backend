@@ -262,26 +262,31 @@ async def test_correct_identity_maps_the_whole_flow_progressively() -> None:
             ).scalar_one()
 
         assert run["status"] == "completed" and run["end_reason"] == "completed"
+        # Reached topics are named after the planned candidates, not whatever
+        # the model called them (balance -> "Check account balance").
         assert {n["node_id"] for n in nodes} == {
             "greeting",
             "verification",
             "main_menu",
-            "balance",
-            "card_block",
-            "branch_info",
-            "human_handoff",
+            "check_account_balance",
+            "report_a_lost_or_stolen_card",
+            "find_branch_hours_and_location",
+            "talk_to_a_human_agent",
         }
         assert all(n["state"] == "mapped" for n in nodes)
-        assert ("greeting", "verification") in {tuple(e) for e in edges}
+        edge_set = {tuple(e) for e in edges}
+        assert ("greeting", "verification") in edge_set
+        # Hub-and-spoke: topics are reached from the menu, not chained.
+        assert ("main_menu", "report_a_lost_or_stolen_card") in edge_set
         assert {i["name"]: i["state"] for i in intents} == {
-            "Balance": "mapped",
-            "Card Block": "mapped",
-            "Branch Info": "mapped",
-            "Human Handoff": "mapped",
+            "Check account balance": "mapped",
+            "Report a lost or stolen card": "mapped",
+            "Find branch hours and location": "mapped",
+            "Talk to a human agent": "mapped",
         }
-        assert all(
-            i["path"].startswith("Greeting → Identity") or i["path"].startswith("Greeting →")
-            for i in intents
+        paths = {i["name"]: i["path"] for i in intents}
+        assert paths["Report a lost or stolen card"] == (
+            "Greeting → Verification → Main Menu → Report a lost or stolen card"
         )
         assert turns == 14
 
@@ -543,6 +548,6 @@ async def test_demo_environment_without_a_flagged_run_explores_live() -> None:
                 await conn.execute(text("SELECT config FROM runs WHERE id = :r"), {"r": claimed.id})
             ).scalar_one()
         assert "replayOf" not in config  # fell through to the live path
-        assert (await _events(engine, claimed.id, "node"))[0]["nodeId"] == "human_handoff"
+        assert (await _events(engine, claimed.id, "node"))[0]["nodeId"] == "talk_to_a_human_agent"
     finally:
         await _cleanup(engine, agent_id)

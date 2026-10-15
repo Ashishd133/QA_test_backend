@@ -45,6 +45,9 @@ DEFAULT_TURN_BUDGET = 40
 MAX_GATE_REJECTIONS = 3
 MAX_CANDIDATES = 6
 _HISTORY_TURNS = 14
+# Turns spent on one topic that produce nothing for it (the agent deflects,
+# says it can't help) before we move on and report it unexplored.
+MAX_STALLS_PER_TOPIC = 2
 
 OPENING_LINE = "Hi, I was hoping you could help me with something."
 CLOSING_LINE = "Okay, thanks so much for your help. Goodbye."
@@ -155,6 +158,10 @@ def order_candidates(candidates: Sequence[str]) -> list[str]:
     return plain + handoff
 
 
+def slug(topic: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", topic.casefold()).strip("_")
+
+
 @dataclass(frozen=True)
 class ExplorerTurn:
     utterance: str
@@ -182,14 +189,24 @@ class ExplorerCaller:
         self._turn_budget = turn_budget
         self._on_observation = on_observation
         self.reached: list[str] = []
+        self._abandoned: list[str] = []
+        self._stalls: dict[str, int] = {}
+        # The topic this turn's directive pointed at (None while wrapping up).
+        self._target: str | None = None
         self.rejections = 0
         self.caller_turns = 0
         self.handed_off = False
 
     @property
     def remaining(self) -> list[str]:
-        done = {r.casefold() for r in self.reached}
+        done = {r.casefold() for r in (*self.reached, *self._abandoned)}
         return [c for c in self.candidates if c.casefold() not in done]
+
+    @property
+    def unexplored(self) -> list[str]:
+        """Topics never reached: still pending when the call ended, or given
+        up on after the agent kept deflecting."""
+        return [*self.remaining, *self._abandoned]
 
     async def next_turn(self, transcript: list[Turn]) -> ExplorerTurn:
         if not transcript:
@@ -200,35 +217,71 @@ class ExplorerCaller:
             return ExplorerTurn(_NUDGE_LINE, False)
 
         self.caller_turns += 1
+        self._target = self.remaining[0] if self.remaining else None
         out = await self._llm.plan(EXPLORER_SYSTEM, self._prompt(transcript))
 
+        obs = self._canonical(out)
         index = len(transcript) - 1
-        result = self.graph.observe(index, out.observation)
+        result = self.graph.observe(index, obs)
         if self._on_observation is not None:
-            await self._on_observation(index, out.observation, result)
-        self._absorb(out)
+            await self._on_observation(index, obs, result)
+        self._absorb(obs)
 
         if out.call_complete:
             return ExplorerTurn(out.utterance, True)
-        if self._should_stop(out.observation):
+        if self._should_stop(obs):
             return ExplorerTurn(CLOSING_LINE, True)
         return ExplorerTurn(out.utterance, False)
 
-    def _absorb(self, out: ExplorerLLMOutput) -> None:
+    def _attributed_topic(self, out: ExplorerLLMOutput) -> str | None:
+        """Which candidate topic this agent turn carried out. The model is
+        asked to say, but is not trusted to: if it doesn't, an intent reply
+        is attributed to the topic we were steering at, and a handoff to the
+        handoff-style topic."""
         obs = out.observation
+        if out.reached_candidate is not None:
+            match = self._match(out.reached_candidate)
+            if match is not None:
+                return match
+        if obs.kind == "intent":
+            return self._target
+        if obs.kind == "handoff":
+            return next((c for c in self.remaining if _HANDOFF_WORDS.search(c)), None)
+        return None
+
+    def _match(self, name: str) -> str | None:
+        return next((c for c in self.candidates if c.casefold() == name.casefold()), None)
+
+    def _canonical(self, out: ExplorerLLMOutput) -> TurnObservation:
+        """Name a reached topic after the candidate itself, so the map's
+        intent names are the ones we planned (and `graph.intents(expected)`
+        can tell reached topics from blocked ones) rather than whatever
+        phrasing the model happened to use."""
+        topic = self._attributed_topic(out)
+        if topic is None or topic in self.reached:
+            return out.observation
+        kind = "handoff" if _HANDOFF_WORDS.search(topic) else "intent"
+        return out.observation.model_copy(
+            update={"node_key": slug(topic), "label": topic, "kind": kind}
+        )
+
+    def _absorb(self, obs: TurnObservation) -> None:
         if obs.gate_result == "rejected":
             self.rejections += 1
         if obs.kind == "handoff":
             self.handed_off = True
-        for claimed in (
-            out.reached_candidate,
-            obs.label if obs.kind in ("intent", "handoff") else None,
-        ):
-            if claimed is None:
-                continue
-            match = next((c for c in self.candidates if c.casefold() == claimed.casefold()), None)
-            if match is not None and match not in self.reached:
-                self.reached.append(match)
+        topic = self._match(obs.label) if obs.kind in ("intent", "handoff") else None
+        if topic is not None:
+            if topic not in self.reached:
+                self.reached.append(topic)
+            return
+        # Nothing carried out. Replies that are part of getting there (the
+        # greeting, identity questions) don't count against the topic.
+        if self._target is not None and obs.kind not in ("gate", "greeting"):
+            stalls = self._stalls.get(self._target, 0) + 1
+            self._stalls[self._target] = stalls
+            if stalls >= MAX_STALLS_PER_TOPIC and self._target not in self._abandoned:
+                self._abandoned.append(self._target)
 
     def _gate_open(self, obs: TurnObservation) -> bool:
         return obs.kind == "gate" and obs.gate_result in ("pending", "rejected")
@@ -243,13 +296,23 @@ class ExplorerCaller:
     def _directive(self) -> str:
         """Decided before the model has classified the latest agent turn
         (same call), so it is conditional: the model picks the branch from
-        its own observation. The stop decision after the call is code's."""
+        its own observation. Naming the topic *after* the current one is
+        what stops it asking the same thing again once the agent has just
+        answered it. The stop decision after the call is code's."""
         if self.caller_turns >= self._turn_budget - 1 or not self.remaining:
             return "WRAP UP: thank the agent and say goodbye."
+        current = self.remaining[0]
+        after = (
+            f"ASK about: {self.remaining[1]!r}, in one short natural sentence."
+            if len(self.remaining) > 1
+            else "WRAP UP: thank the agent and say goodbye."
+        )
         return (
             "If the agent is asking you to verify your identity, or says your details did not "
             "match, ANSWER using only your identity details, giving just what it asked for. "
-            f"Otherwise ASK about: {self.remaining[0]!r}, in one short natural sentence."
+            f"Otherwise, if the agent's latest reply just carried out {current!r}, do not ask "
+            f"for it again; instead {after} "
+            f"Otherwise ASK about: {current!r}, in one short natural sentence."
         )
 
     def _prompt(self, transcript: list[Turn]) -> str:
