@@ -98,6 +98,7 @@ JOIN_GRACE_SECS = 5.0  # let the target agent finish joining + connecting before
 TURN_GAP_SECS = 1.5  # pause after the agent stops talking before asking the persona LLM
 MAX_TURNS = 10  # hard safety cap, independent of the model's own call_complete signal
 RUN_TIMEOUT_SECS = 180.0
+MAX_SILENT_NUDGES = 2
 
 
 class PersonaRunner(FrameProcessor):
@@ -134,10 +135,21 @@ class PersonaRunner(FrameProcessor):
         on_turn: OnTurn | None = None,
         cancel_event: asyncio.Event | None = None,
         max_turns: int = MAX_TURNS,
+        silence_timeout_secs: float | None = None,
+        max_silent_nudges: int = MAX_SILENT_NUDGES,
     ) -> None:
         super().__init__()
         self._persona_caller = persona_caller
         self._max_turns = max_turns
+        # B5-02: opt-in (None = the pre-B5 behavior, wait for the agent
+        # forever). If the agent says nothing for this long after one of our
+        # lines, ask the planner for another line (a nudge); after
+        # `max_silent_nudges` unanswered ones, end the call. Without this a
+        # dead or wedged agent idles the call until the whole-run timeout.
+        self._silence_timeout_secs = silence_timeout_secs
+        self._max_silent_nudges = max_silent_nudges
+        self._silent_nudges = 0
+        self._pending_silence_check: asyncio.Task[None] | None = None
         self._on_turn = on_turn
         self._cancel_event = cancel_event
         self._transcript: list[Turn] = []
@@ -160,6 +172,8 @@ class PersonaRunner(FrameProcessor):
         if isinstance(frame, TranscriptionFrame):
             logger.info(f"[reference agent said] {frame.text}")
             await self.push_frame(frame, direction)
+            self._cancel_silence_check()
+            self._silent_nudges = 0
             turn = Turn(speaker="agent", text=frame.text)
             self._transcript.append(turn)
             if self._on_turn is not None:
@@ -187,6 +201,33 @@ class PersonaRunner(FrameProcessor):
             self._pending_advance.cancel()
         self._pending_advance = self.create_task(self._advance_after(delay))
 
+    def _cancel_silence_check(self) -> None:
+        if self._pending_silence_check is not None:
+            self._pending_silence_check.cancel()
+            self._pending_silence_check = None
+
+    def _schedule_silence_check(self) -> None:
+        if self._silence_timeout_secs is None or self._done:
+            return
+        self._cancel_silence_check()
+        self._pending_silence_check = self.create_task(
+            self._check_silence(self._silence_timeout_secs)
+        )
+
+    async def _check_silence(self, delay: float) -> None:
+        await asyncio.sleep(delay)
+        if self._done:
+            return
+        self._silent_nudges += 1
+        if self._silent_nudges > self._max_silent_nudges:
+            logger.warning(f"agent silent after {self._max_silent_nudges} nudges, ending call")
+            self._done = True
+            self.end_reason = "timeout"
+            await self.push_frame(EndFrame())
+            return
+        logger.info(f"agent silent for {delay}s, nudging ({self._silent_nudges})")
+        await self._speak_next()
+
     async def _advance_after(self, delay: float) -> None:
         await asyncio.sleep(delay)
         await self._speak_next()
@@ -213,6 +254,9 @@ class PersonaRunner(FrameProcessor):
         if await self._maybe_end_for_cancellation():
             return
         await self.push_frame(TTSSpeakFrame(text=result.utterance))
+
+        if not result.call_complete:
+            self._schedule_silence_check()
 
         if result.call_complete:
             logger.info("persona LLM signalled call_complete, ending call")
@@ -257,6 +301,7 @@ async def run_persona_call(
     planner: TurnPlanner | None = None,
     max_turns: int = MAX_TURNS,
     run_timeout_secs: float = RUN_TIMEOUT_SECS,
+    silence_timeout_secs: float | None = None,
 ) -> PersonaCallResult:
     """Runs one full call against whatever reference agent is currently
     registered with the LiveKit project (see this module's docstring), drives
@@ -285,7 +330,9 @@ async def run_persona_call(
     own `TurnPlanner` (the explorer) in place of the persona LLM, and a
     larger turn/time budget than a single-goal simulation needs. All three
     default to the pre-B5 behavior, so simulations are unaffected.
-    `persona` still supplies the caller's voice/language either way.
+    `silence_timeout_secs` (default off) ends a call whose agent has gone
+    quiet -- see `PersonaRunner`. `persona` still supplies the caller's
+    voice/language either way.
 
     `run_id`: B2-09's correlation key. When given: (1) every log line for
     the rest of this call, including ones deep inside PersonaRunner/
@@ -348,7 +395,11 @@ async def run_persona_call(
         )
         vad = VADProcessor(vad_analyzer=SileroVADAnalyzer())
         persona_runner = PersonaRunner(
-            persona_caller, on_turn=on_turn, cancel_event=cancel_event, max_turns=max_turns
+            persona_caller,
+            on_turn=on_turn,
+            cancel_event=cancel_event,
+            max_turns=max_turns,
+            silence_timeout_secs=silence_timeout_secs,
         )
         clock = latency_clock if latency_clock is not None else LatencyClock()
 

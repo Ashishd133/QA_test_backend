@@ -86,6 +86,8 @@ from app.workers.rollup import maybe_close_parent
 
 # 40 caller turns at roughly 10-15s each, plus join/teardown headroom.
 DISCOVERY_RUN_TIMEOUT_SECS = 900.0
+# An agent that says nothing for this long after our line is nudged, then dropped.
+DISCOVERY_SILENCE_TIMEOUT_SECS = 30.0
 
 _RUN_SQL = text(
     "SELECT r.config, r.created_by_user_id, a.name, a.description, a.prompt "
@@ -113,6 +115,7 @@ class CallRunner(Protocol):
         planner: TurnPlanner | None,
         max_turns: int,
         run_timeout_secs: float,
+        silence_timeout_secs: float | None,
     ) -> PersonaCallResult: ...
 
 
@@ -309,6 +312,7 @@ async def _run_discovery_body(
                 planner=explorer,
                 max_turns=DEFAULT_TURN_BUDGET,
                 run_timeout_secs=DISCOVERY_RUN_TIMEOUT_SECS,
+                silence_timeout_secs=DISCOVERY_SILENCE_TIMEOUT_SECS,
             )
         except Exception:
             logger.exception(f"discovery call failed for run {run_id}")
@@ -348,6 +352,19 @@ async def _run_discovery_body(
                 else:
                     await _emit_node_frames(conn, run_id, graph, changed_at_end)
                     await _emit_intent_frames(conn, run_id, intents)
+                    if explorer.failure is not None:
+                        # Not fatal (the map so far is real) but not a clean
+                        # finish either: say so rather than report it clean.
+                        await emit(
+                            conn,
+                            run_id,
+                            error_event(
+                                code="explorer_failed",
+                                message=f"exploration stopped early: {explorer.failure}",
+                                fatal=False,
+                            ),
+                        )
+                        end_reason = "error"
                     summary = _summarize(graph, intents, explorer)
                     done = done_event(discovery_result=summary)
                     final_status = "completed"

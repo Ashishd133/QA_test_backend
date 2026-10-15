@@ -21,6 +21,7 @@ Policy:
 
 from __future__ import annotations
 
+import asyncio
 import re
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -29,6 +30,7 @@ from typing import Protocol
 from google import genai
 from google.auth.credentials import Credentials
 from google.genai import types
+from loguru import logger
 from pydantic import BaseModel
 
 from app.engine.caller.persona import DEFAULT_MODEL, Turn
@@ -48,6 +50,10 @@ _HISTORY_TURNS = 14
 # Turns spent on one topic that produce nothing for it (the agent deflects,
 # says it can't help) before we move on and report it unexplored.
 MAX_STALLS_PER_TOPIC = 2
+# One model call (observe + phrase). Generous for Gemini Flash; the point is that
+# a hung or failing call ends the exploration instead of idling the phone call
+# until the run timeout.
+PLAN_TIMEOUT_SECS = 45.0
 
 OPENING_LINE = "Hi, I was hoping you could help me with something."
 CLOSING_LINE = "Okay, thanks so much for your help. Goodbye."
@@ -196,6 +202,8 @@ class ExplorerCaller:
         self.rejections = 0
         self.caller_turns = 0
         self.handed_off = False
+        # Set if the model call failed/timed out and we ended the call early.
+        self.failure: str | None = None
 
     @property
     def remaining(self) -> list[str]:
@@ -218,7 +226,19 @@ class ExplorerCaller:
 
         self.caller_turns += 1
         self._target = self.remaining[0] if self.remaining else None
-        out = await self._llm.plan(EXPLORER_SYSTEM, self._prompt(transcript))
+        try:
+            out = await asyncio.wait_for(
+                self._llm.plan(EXPLORER_SYSTEM, self._prompt(transcript)),
+                timeout=PLAN_TIMEOUT_SECS,
+            )
+        except Exception as exc:  # noqa: BLE001 - includes TimeoutError; any failure ends the call
+            # Nothing above PersonaRunner turns an exception into an EndFrame,
+            # so letting this propagate would leave the call idling until the
+            # run timeout. End it ourselves and let the executor report that
+            # the map is partial because of a failure, not a clean finish.
+            logger.exception("explorer model call failed; ending the call")
+            self.failure = f"{type(exc).__name__}: {exc}"[:200]
+            return ExplorerTurn(CLOSING_LINE, True)
 
         obs = self._canonical(out)
         index = len(transcript) - 1
@@ -258,9 +278,12 @@ class ExplorerCaller:
         can tell reached topics from blocked ones) rather than whatever
         phrasing the model happened to use."""
         topic = self._attributed_topic(out)
-        if topic is None or topic in self.reached:
+        if topic is None:
             return out.observation
-        kind = "handoff" if _HANDOFF_WORDS.search(topic) else "intent"
+        # Keep what the model saw (it did see an intent or a handoff); only
+        # the naming is ours. A topic reached before lands on its existing
+        # node rather than minting a second one under the model's key.
+        kind = out.observation.kind if out.observation.kind in ("intent", "handoff") else "intent"
         return out.observation.model_copy(
             update={"node_key": slug(topic), "label": topic, "kind": kind}
         )

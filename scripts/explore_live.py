@@ -63,6 +63,7 @@ async def main(identity: dict[str, str]) -> None:
         planner=explorer,
         max_turns=DEFAULT_TURN_BUDGET,
         run_timeout_secs=600,
+        silence_timeout_secs=30,
     )
     print(f"\ncall ended: {result.end_reason}; caller turns={explorer.caller_turns}")
     print("nodes:")

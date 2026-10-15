@@ -239,3 +239,60 @@ async def test_directive_names_the_following_topic_so_a_just_answered_one_is_not
     assert "just carried out 'Check balance'" in prompt
     assert "instead ASK about: 'Branch hours'" in prompt
     assert "Otherwise ASK about: 'Check balance'" in prompt
+
+
+class FailingLLM:
+    async def plan(self, system: str, prompt: str) -> ExplorerLLMOutput:
+        raise RuntimeError("vertex unavailable")
+
+    async def propose(self, system: str, prompt: str) -> ProposedCandidates:
+        raise RuntimeError("vertex unavailable")
+
+
+async def test_a_failing_model_call_ends_the_call_instead_of_hanging_it() -> None:
+    caller = ExplorerCaller(FailingLLM(), identity=IDENTITY, candidates=["Check balance"])
+    turns = await _drive(caller, ["hello"])
+    assert turns == [(CLOSING_LINE, True)]
+    assert caller.failure is not None and "vertex unavailable" in caller.failure
+
+
+async def test_a_hung_model_call_times_out(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    import asyncio
+
+    from app.engine.discovery import explorer as explorer_module
+
+    class HangingLLM(FailingLLM):
+        async def plan(self, system: str, prompt: str) -> ExplorerLLMOutput:
+            await asyncio.sleep(60)
+            raise AssertionError("unreachable")
+
+    monkeypatch.setattr(explorer_module, "PLAN_TIMEOUT_SECS", 0.05)
+    caller = ExplorerCaller(HangingLLM(), identity=IDENTITY, candidates=["Check balance"])
+    assert await _drive(caller, ["hello"]) == [(CLOSING_LINE, True)]
+    assert caller.failure is not None
+
+
+async def test_a_topic_that_merely_mentions_agent_does_not_end_exploration() -> None:
+    """An insurance bot's real topic is "Find a local agent"; keyword-matching
+    it as a human handoff would stop discovery after the first intent."""
+    llm = ScriptedLLM([_out(_obs("x", "intent")), _out(_obs("y", "intent"))])
+    caller = ExplorerCaller(
+        llm, identity=IDENTITY, candidates=["Get a quote", "Find a local agent"]
+    )
+    turns = await _drive(caller, ["your quote is 5", "agents near you: ..."])
+    assert caller.reached == ["Get a quote", "Find a local agent"]
+    assert not caller.handed_off
+    assert [n.kind for n in caller.graph.nodes] == ["intent", "intent"]
+    assert turns[0][1] is False  # first intent did not end the call
+
+
+async def test_reaching_a_topic_again_lands_on_its_existing_node() -> None:
+    llm = ScriptedLLM(
+        [
+            _out(_obs("balance_a", "intent"), reached="Check balance"),
+            _out(_obs("balance_b", "intent"), reached="Check balance"),
+        ]
+    )
+    caller = ExplorerCaller(llm, identity=IDENTITY, candidates=["Check balance", "Branch hours"])
+    await _drive(caller, ["your balance is 5", "as I said, 5"])
+    assert [n.key for n in caller.graph.nodes] == ["check_balance"]

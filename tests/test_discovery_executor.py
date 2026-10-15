@@ -78,6 +78,7 @@ def _scripted_call(agent_lines: list[str]):  # type: ignore[no-untyped-def]
         planner: TurnPlanner | None,
         max_turns: int,
         run_timeout_secs: float,
+        silence_timeout_secs: float | None,
     ) -> PersonaCallResult:
         assert planner is not None and on_turn is not None
         transcript: list[Turn] = []
@@ -549,5 +550,40 @@ async def test_demo_environment_without_a_flagged_run_explores_live() -> None:
             ).scalar_one()
         assert "replayOf" not in config  # fell through to the live path
         assert (await _events(engine, claimed.id, "node"))[0]["nodeId"] == "talk_to_a_human_agent"
+    finally:
+        await _cleanup(engine, agent_id)
+
+
+async def test_a_model_failure_mid_exploration_is_reported_not_passed_off_as_clean() -> None:
+    engine = _test_engine()
+    agent_id = await _make_agent(engine)
+    try:
+        claimed = await _start_run(engine, agent_id)
+
+        class DiesAfterOne(ScriptedLLM):
+            async def plan(self, system: str, prompt: str) -> ExplorerLLMOutput:
+                if not self._outputs:
+                    raise RuntimeError("vertex unavailable")
+                return await super().plan(system, prompt)
+
+        llm = DiesAfterOne([_out("greeting", "greeting")])
+        await run_discovery(
+            engine, claimed, run_call=_scripted_call(["hello", "who are you"]), make_llm=lambda: llm
+        )
+        async with engine.connect() as conn:
+            run = (
+                (
+                    await conn.execute(
+                        text("SELECT status, end_reason FROM runs WHERE id = :r"), {"r": claimed.id}
+                    )
+                )
+                .mappings()
+                .one()
+            )
+        assert run["status"] == "completed" and run["end_reason"] == "error"
+        error = (await _events(engine, claimed.id, "error"))[0]
+        assert error["code"] == "explorer_failed" and error["fatal"] is False
+        done = (await _events(engine, claimed.id, "done"))[0]
+        assert done["discoveryResult"]["unexplored"]  # type: ignore[index]
     finally:
         await _cleanup(engine, agent_id)
