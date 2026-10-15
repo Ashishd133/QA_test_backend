@@ -20,7 +20,7 @@ import os
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Literal, Protocol
 
 from dotenv import load_dotenv
 from loguru import logger
@@ -56,6 +56,23 @@ from app.gcp_auth import google_credentials_kwargs, load_google_oauth2_credentia
 CallEndReason = Literal["caller_ended", "timeout", "cancelled"]
 
 OnTurn = Callable[[Turn], Awaitable[None]]
+
+
+class PlannedTurn(Protocol):
+    @property
+    def utterance(self) -> str: ...
+
+    @property
+    def call_complete(self) -> bool: ...
+
+
+class TurnPlanner(Protocol):
+    """What PersonaRunner needs from whatever decides the caller's next
+    line: `PersonaCaller` (scripted-goal simulations) or B5-02's
+    `ExplorerCaller` (discovery)."""
+
+    async def next_turn(self, transcript: list[Turn]) -> PlannedTurn: ...
+
 
 load_dotenv()
 
@@ -112,13 +129,15 @@ class PersonaRunner(FrameProcessor):
 
     def __init__(
         self,
-        persona_caller: PersonaCaller,
+        persona_caller: TurnPlanner,
         *,
         on_turn: OnTurn | None = None,
         cancel_event: asyncio.Event | None = None,
+        max_turns: int = MAX_TURNS,
     ) -> None:
         super().__init__()
         self._persona_caller = persona_caller
+        self._max_turns = max_turns
         self._on_turn = on_turn
         self._cancel_event = cancel_event
         self._transcript: list[Turn] = []
@@ -177,8 +196,8 @@ class PersonaRunner(FrameProcessor):
             return
         if self._done:
             return
-        if self._turns_taken >= MAX_TURNS:
-            logger.warning(f"persona call hit MAX_TURNS={MAX_TURNS}, ending call")
+        if self._turns_taken >= self._max_turns:
+            logger.warning(f"persona call hit max_turns={self._max_turns}, ending call")
             self._done = True
             self.end_reason = "timeout"
             await self.push_frame(EndFrame())
@@ -235,6 +254,9 @@ async def run_persona_call(
     cancel_event: asyncio.Event | None = None,
     run_id: uuid.UUID | None = None,
     livekit: LiveKitCreds | None = None,
+    planner: TurnPlanner | None = None,
+    max_turns: int = MAX_TURNS,
+    run_timeout_secs: float = RUN_TIMEOUT_SECS,
 ) -> PersonaCallResult:
     """Runs one full call against whatever reference agent is currently
     registered with the LiveKit project (see this module's docstring), drives
@@ -259,6 +281,12 @@ async def run_persona_call(
     call early on user cancellation, the same "checked every turn" contract
     `fake_runner.py` implements for scripted runs (spine §5).
 
+    `planner`, `max_turns`, `run_timeout_secs`: B5-02. Discovery supplies its
+    own `TurnPlanner` (the explorer) in place of the persona LLM, and a
+    larger turn/time budget than a single-goal simulation needs. All three
+    default to the pre-B5 behavior, so simulations are unaffected.
+    `persona` still supplies the caller's voice/language either way.
+
     `run_id`: B2-09's correlation key. When given: (1) every log line for
     the rest of this call, including ones deep inside PersonaRunner/
     PersonaCaller that only ever reference the bare module-level `logger`,
@@ -280,8 +308,10 @@ async def run_persona_call(
         logger.info(f"joining room {room_name!r} as cadence-caller (persona={persona.name!r})")
 
         credentials = load_google_oauth2_credentials()
-        persona_caller = PersonaCaller(
-            persona, credentials=credentials, project=project, location=location
+        persona_caller: TurnPlanner = (
+            planner
+            if planner is not None
+            else PersonaCaller(persona, credentials=credentials, project=project, location=location)
         )
 
         transport = LiveKitTransport(
@@ -317,7 +347,9 @@ async def run_persona_call(
             ),
         )
         vad = VADProcessor(vad_analyzer=SileroVADAnalyzer())
-        persona_runner = PersonaRunner(persona_caller, on_turn=on_turn, cancel_event=cancel_event)
+        persona_runner = PersonaRunner(
+            persona_caller, on_turn=on_turn, cancel_event=cancel_event, max_turns=max_turns
+        )
         clock = latency_clock if latency_clock is not None else LatencyClock()
 
         pipeline = Pipeline([transport.input(), vad, stt, persona_runner, tts, transport.output()])
@@ -344,7 +376,7 @@ async def run_persona_call(
         )
 
         try:
-            await asyncio.wait_for(runner.run(worker), timeout=RUN_TIMEOUT_SECS)
+            await asyncio.wait_for(runner.run(worker), timeout=run_timeout_secs)
         except TimeoutError:
             logger.error("persona call timed out")
             await worker.cancel()
