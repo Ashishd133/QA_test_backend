@@ -439,6 +439,62 @@
         "title": "AttackData",
         "type": "object"
       },
+      "AttackPackSummary": {
+        "properties": {
+          "category": {
+            "enum": [
+              "Injection",
+              "PII",
+              "Auth",
+              "Social",
+              "Harmful"
+            ],
+            "title": "Category",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "requiresVerified": {
+            "title": "Requiresverified",
+            "type": "boolean"
+          },
+          "severityIfSuccess": {
+            "enum": [
+              "critical",
+              "high",
+              "medium",
+              "low"
+            ],
+            "title": "Severityifsuccess",
+            "type": "string"
+          },
+          "turns": {
+            "title": "Turns",
+            "type": "integer"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "version",
+          "name",
+          "category",
+          "requiresVerified",
+          "severityIfSuccess",
+          "turns"
+        ],
+        "title": "AttackPackSummary",
+        "type": "object"
+      },
       "BacktestCallVerdict": {
         "properties": {
           "rationale": {
@@ -4532,6 +4588,31 @@
         "summary": "Test Connection Post Save",
         "tags": [
           "agents"
+        ]
+      }
+    },
+    "/v1/attack-packs": {
+      "get": {
+        "operationId": "list_attack_packs",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/AttackPackSummary"
+                  },
+                  "title": "Response List Attack Packs",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Attack Packs",
+        "tags": [
+          "attack-packs"
         ]
       }
     },

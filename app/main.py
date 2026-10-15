@@ -3,6 +3,7 @@ from fastapi.routing import APIRoute
 
 from app.api import (
     agents,
+    attack_packs,
     dashboard,
     healthz,
     metrics,
@@ -36,6 +37,7 @@ def create_app() -> FastAPI:
     app.include_router(runs.router)
     app.include_router(suites.router)
     app.include_router(agents.router)
+    app.include_router(attack_packs.router)
     app.include_router(dashboard.router)
     app.include_router(personas.router)
     app.include_router(metrics.router)
