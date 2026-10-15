@@ -65,12 +65,19 @@ class MetricResultData(EventData):
 
 
 class NodeData(EventData):
+    """B5-03: an upsert keyed by `node_id` -- a node is re-emitted when its
+    state or incoming edges change, and the latest frame wins (same
+    "snapshot, not delta" discipline as `ExposureData`). `from_nodes` are the
+    nodes with an edge into this one, so the map can be drawn from events
+    alone."""
+
     node_id: str
     label: str
     x: float
     y: float
     state: str
     blocked_reason: str | None = None
+    from_nodes: list[str] = []
 
 
 class IntentData(EventData):
@@ -95,13 +102,27 @@ class ExposureData(EventData):
     counts: dict[str, int]
 
 
+class DiscoveryResult(EventData):
+    """B5-03: the discovery run's completion summary (`done.discoveryResult`).
+    The full map is in the run's node/intent events; this is the headline."""
+
+    nodes_mapped: int
+    nodes_blocked: int
+    intents_mapped: int
+    intents_blocked: int
+    # Candidate topics the explorer never reached and had no gate to blame
+    # (turn budget hit, call ended early) -- reported, not guessed at.
+    unexplored: list[str] = []
+    turns_used: int
+
+
 class DoneData(EventData):
     """Type-specific completion payload (spine §4): populate whichever
     subset applies to the run's type (simulation | discovery | redteam)."""
 
     score: float | None = None
     result_badge: Literal["pass", "warn", "fail"] | None = None
-    discovery_result: dict[str, object] | None = None
+    discovery_result: DiscoveryResult | None = None
     findings_count: int | None = None
     exposure: dict[str, int] | None = None
 

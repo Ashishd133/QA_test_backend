@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 from app.schemas.events import (
     AssertionData,
     AttackData,
+    DiscoveryResult,
     DoneData,
     ErrorData,
     EventData,
@@ -150,11 +151,18 @@ def node_event(
     y: float,
     state: str,
     blocked_reason: str | None = None,
+    from_nodes: list[str] | None = None,
 ) -> Event:
     return Event(
         type="node",
         data=NodeData(
-            node_id=node_id, label=label, x=x, y=y, state=state, blocked_reason=blocked_reason
+            node_id=node_id,
+            label=label,
+            x=x,
+            y=y,
+            state=state,
+            blocked_reason=blocked_reason,
+            from_nodes=from_nodes or [],
         ),
     )
 
@@ -191,7 +199,7 @@ def done_event(
     *,
     score: float | None = None,
     result_badge: Literal["pass", "warn", "fail"] | None = None,
-    discovery_result: dict[str, object] | None = None,
+    discovery_result: DiscoveryResult | None = None,
     findings_count: int | None = None,
     exposure: dict[str, int] | None = None,
 ) -> Event:

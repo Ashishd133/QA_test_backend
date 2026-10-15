@@ -1,0 +1,88 @@
+{
+ "description": "Two intents after verification.",
+ "observations": [
+  {
+   "turn_index": 1,
+   "node_key": "greeting",
+   "label": "Greeting",
+   "kind": "greeting"
+  },
+  {
+   "turn_index": 3,
+   "node_key": "verification",
+   "label": "Identity verification",
+   "kind": "gate",
+   "gate_result": "pending"
+  },
+  {
+   "turn_index": 5,
+   "node_key": "main_menu",
+   "label": "Main menu",
+   "kind": "menu",
+   "gate_result": "passed"
+  },
+  {
+   "turn_index": 7,
+   "node_key": "balance_check",
+   "label": "Balance check",
+   "kind": "intent"
+  },
+  {
+   "turn_index": 9,
+   "node_key": "card_block",
+   "label": "Card block",
+   "kind": "intent"
+  },
+  {
+   "turn_index": 11,
+   "node_key": "call_end",
+   "label": "Call ended",
+   "kind": "other"
+  }
+ ],
+ "expect": {
+  "nodes": [
+   "greeting",
+   "verification",
+   "main_menu",
+   "balance_check",
+   "card_block",
+   "call_end"
+  ],
+  "edges": [
+   [
+    "greeting",
+    "verification"
+   ],
+   [
+    "verification",
+    "main_menu"
+   ],
+   [
+    "main_menu",
+    "balance_check"
+   ],
+   [
+    "balance_check",
+    "main_menu"
+   ],
+   [
+    "main_menu",
+    "card_block"
+   ],
+   [
+    "card_block",
+    "call_end"
+   ]
+  ],
+  "gate": {
+   "key": "verification",
+   "state": "mapped"
+  },
+  "intents": {
+   "Balance check": "mapped",
+   "Card block": "mapped"
+  }
+ },
+ "case_id": "m_multi_intent_balance_then_card_block"
+}

@@ -1,0 +1,38 @@
+{
+ "description": "Caller hangs up while the gate is pending: blocked on finalize.",
+ "observations": [
+  {
+   "turn_index": 1,
+   "node_key": "greeting",
+   "label": "Greeting",
+   "kind": "greeting"
+  },
+  {
+   "turn_index": 3,
+   "node_key": "verification",
+   "label": "Identity verification",
+   "kind": "gate",
+   "gate_result": "pending"
+  }
+ ],
+ "finalize": true,
+ "expect": {
+  "nodes": [
+   "greeting",
+   "verification"
+  ],
+  "edges": [
+   [
+    "greeting",
+    "verification"
+   ]
+  ],
+  "gate": {
+   "key": "verification",
+   "state": "blocked",
+   "reason_contains": "ended before"
+  },
+  "intents": {}
+ },
+ "case_id": "unresolved_gate_at_hangup"
+}
