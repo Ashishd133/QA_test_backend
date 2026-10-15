@@ -4,6 +4,7 @@ real: run creation (encrypted dummy identity), event log, materialization
 into discovery_nodes/edges/intents, and the lifecycle/terminal status."""
 
 import asyncio
+import json
 import uuid
 
 import pytest
@@ -375,5 +376,173 @@ async def test_an_agent_that_never_answers_fails_the_run_instead_of_completing_e
             ).scalar_one()
         assert status == "failed"
         assert (await _events(engine, claimed.id, "error"))[0]["code"] == "no_observations"
+    finally:
+        await _cleanup(engine, agent_id)
+
+
+async def _insert_flagged_source(engine: AsyncEngine, agent_id: uuid.UUID) -> uuid.UUID:
+    """A completed discovery run with a recorded map, flagged as the demo
+    replay -- inserted directly (a real one costs a live call)."""
+    source_id = uuid.uuid4()
+    node = {
+        "nodeId": "greeting",
+        "label": "Greeting",
+        "x": 0,
+        "y": 0,
+        "state": "mapped",
+        "fromNodes": [],
+    }
+    gate = {
+        "nodeId": "verification",
+        "label": "Identity verification",
+        "x": 240,
+        "y": 0,
+        "state": "blocked",
+        "blockedReason": _REJECTED,
+        "fromNodes": ["greeting"],
+    }
+    intent = {
+        "name": "Balance",
+        "state": "blocked",
+        "path": "Greeting → Identity verification → Balance",
+        "reason": _REJECTED,
+    }
+    result = {
+        "nodesMapped": 1,
+        "nodesBlocked": 1,
+        "intentsMapped": 0,
+        "intentsBlocked": 1,
+        "unexplored": [],
+        "turnsUsed": 1,
+    }
+    events = [
+        ("status", {"status": "running"}),
+        ("turn", {"index": 0, "role": "agent", "text": "Hello, welcome.", "flagged": False}),
+        ("node", node),
+        ("turn", {"index": 1, "role": "caller", "text": "Hi.", "flagged": False}),
+        ("node", gate),
+        ("intent", intent),
+        ("done", {"discoveryResult": result}),
+    ]
+    async with engine.connect() as conn, conn.begin():
+        await conn.execute(
+            text(
+                "INSERT INTO runs (id, type, status, agent_id, created_by_user_id, config, "
+                "metrics, end_reason) VALUES (:id, 'discovery', 'completed', :a, 'user-1', "
+                "CAST(:config AS jsonb), CAST(:metrics AS jsonb), 'completed')"
+            ),
+            {
+                "id": source_id,
+                "a": agent_id,
+                "config": json.dumps({"demoReplay": True}),
+                "metrics": json.dumps({"discoveryResult": result, "turnsCompleted": 2}),
+            },
+        )
+        for seq, (type_, data) in enumerate(events, start=1):
+            await conn.execute(
+                text(
+                    "INSERT INTO run_events (run_id, seq, type, data, ts) VALUES "
+                    "(:r, :s, :t, CAST(:d AS jsonb), now() - make_interval(secs => :ago))"
+                ),
+                {"r": source_id, "s": seq, "t": type_, "d": json.dumps(data), "ago": 60 - seq * 5},
+            )
+    return source_id
+
+
+async def test_demo_environment_replays_the_flagged_run_into_a_normal_new_run() -> None:
+    engine = _test_engine()
+    agent_id = await _make_agent(engine)
+    try:
+        source_id = await _insert_flagged_source(engine, agent_id)
+        claimed = await _start_run(engine, agent_id)
+
+        async def must_not_call(*args: object, **kwargs: object) -> PersonaCallResult:
+            raise AssertionError("a demo replay must not place a live call")
+
+        await run_discovery(
+            engine,
+            claimed,
+            run_call=must_not_call,
+            make_llm=lambda: ScriptedLLM([]),
+            demo=True,
+            replay_max_gap_secs=0,
+        )
+
+        async with engine.connect() as conn:
+            run = (
+                (
+                    await conn.execute(
+                        text("SELECT status, end_reason, config, metrics FROM runs WHERE id = :r"),
+                        {"r": claimed.id},
+                    )
+                )
+                .mappings()
+                .one()
+            )
+            gate = (
+                (
+                    await conn.execute(
+                        text(
+                            "SELECT state, blocked_reason FROM discovery_nodes "
+                            "WHERE run_id = :r AND node_id = 'verification'"
+                        ),
+                        {"r": claimed.id},
+                    )
+                )
+                .mappings()
+                .one()
+            )
+            intents = (
+                await conn.execute(
+                    text("SELECT name, state FROM discovery_intents WHERE run_id = :r"),
+                    {"r": claimed.id},
+                )
+            ).all()
+            edge_count = (
+                await conn.execute(
+                    text("SELECT count(*) FROM discovery_edges WHERE run_id = :r"),
+                    {"r": claimed.id},
+                )
+            ).scalar_one()
+            turn_count = (
+                await conn.execute(
+                    text("SELECT count(*) FROM turns WHERE run_id = :r"), {"r": claimed.id}
+                )
+            ).scalar_one()
+
+        assert run["status"] == "completed" and run["end_reason"] == "completed"
+        assert run["config"]["replayOf"] == str(source_id)
+        assert run["metrics"]["discoveryResult"]["nodesBlocked"] == 1
+        assert gate["state"] == "blocked" and gate["blocked_reason"] == _REJECTED
+        assert [tuple(i) for i in intents] == [("Balance", "blocked")]
+        assert edge_count == 1 and turn_count == 2
+        # The new run's own log is the full vocabulary, in the recorded order.
+        assert [e["nodeId"] for e in await _events(engine, claimed.id, "node")] == [
+            "greeting",
+            "verification",
+        ]
+    finally:
+        await _cleanup(engine, agent_id)
+
+
+async def test_demo_environment_without_a_flagged_run_explores_live() -> None:
+    engine = _test_engine()
+    agent_id = await _make_agent(engine)
+    try:
+        claimed = await _start_run(engine, agent_id)
+        llm = ScriptedLLM([_out("human_handoff", "handoff", reached="Talk to a human agent")])
+        await run_discovery(
+            engine,
+            claimed,
+            run_call=_scripted_call(["connecting you to a human"]),
+            make_llm=lambda: llm,
+            demo=True,
+        )
+        async with engine.connect() as conn:
+            config = (
+                await conn.execute(text("SELECT config FROM runs WHERE id = :r"), {"r": claimed.id})
+            ).scalar_one()
+        assert "replayOf" not in config  # fell through to the live path
+        assert (await _events(engine, claimed.id, "node"))[0]["nodeId"] == "human_handoff"
     finally:
         await _cleanup(engine, agent_id)

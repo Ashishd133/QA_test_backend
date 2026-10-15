@@ -52,6 +52,11 @@ from app.engine.discovery.explorer import (
 )
 from app.engine.discovery.graph import FlowGraph, IntentSummary, ObserveResult
 from app.engine.discovery.models import TurnObservation
+from app.engine.executor.discovery_replay import (
+    DEFAULT_MAX_GAP_SECS,
+    find_replay_source,
+    replay_discovery,
+)
 from app.engine.executor.simulation import (
     _CANCEL_WATCHER_SHUTDOWN_TIMEOUT_SECONDS,
     _HEARTBEAT_SHUTDOWN_TIMEOUT_SECONDS,
@@ -139,8 +144,18 @@ async def run_discovery(
     *,
     run_call: CallRunner = run_persona_call,
     make_llm: Callable[[], ExplorerLLM] = _default_llm,
+    demo: bool | None = None,
+    replay_max_gap_secs: float = DEFAULT_MAX_GAP_SECS,
 ) -> None:
     with logger.contextualize(run_id=str(claimed.id)):
+        # B5-04: in a demo environment a flagged curated run is replayed
+        # instead of exploring live. No flagged run -> normal live path.
+        if demo if demo is not None else get_settings().environment == "demo":
+            source_id = await find_replay_source(engine, claimed)
+            if source_id is not None:
+                logger.info(f"replaying curated discovery run {source_id}")
+                await replay_discovery(engine, claimed, source_id, max_gap_secs=replay_max_gap_secs)
+                return
         await _run_discovery_body(engine, claimed, run_call=run_call, make_llm=make_llm)
 
 
