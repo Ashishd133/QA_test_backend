@@ -19,6 +19,7 @@ from app.config import get_settings
 from app.crypto import encrypt_json
 from app.db import get_engine
 from app.deps import ensure_project_match, require_project_id, require_user_id
+from app.engine.redteam.findings import FINDING_COLUMNS, reveal_findings
 from app.errors import APIError
 from app.formatting import format_duration
 from app.gcp_auth import signed_recording_url
@@ -30,6 +31,7 @@ from app.schemas.runs import (
     DashboardRunRow,
     DiscoveryRunCreate,
     DummyIdentity,
+    FindingDetail,
     ResultAssertion,
     RunAggregate,
     RunCost,
@@ -625,16 +627,18 @@ def _reduce_events(
 @router.get("/v1/runs/{run_id}", response_model=RunDetail)
 async def get_run(
     run_id: uuid.UUID,
+    request: Request,
     project_id: uuid.UUID = Depends(require_project_id),
     engine: AsyncEngine = Depends(get_engine),
 ) -> RunDetail:
-    async with engine.connect() as conn:
+    async with engine.connect() as conn, conn.begin():
         row = (await conn.execute(_RUN_DETAIL_SQL, {"id": run_id})).mappings().first()
         if row is None:
             raise APIError("not_found", "run not found", status.HTTP_404_NOT_FOUND)
         ensure_project_match(row["project_id"], project_id)
         events = (await conn.execute(_RUN_EVENTS_SQL, {"run_id": run_id})).mappings().all()
         aggregate = await _compute_aggregate(conn, row)
+        findings = await _load_findings(conn, row, request)
 
     transcript, result_assertions, latency_series, event_metrics = _reduce_events(list(events))
     done_metrics = row["metrics"] or {}
@@ -678,7 +682,33 @@ async def get_run(
         goal_met=done_metrics.get("goalMet"),
         goal_analysis=done_metrics.get("goalAnalysis"),
         goal_turn_refs=done_metrics.get("goalTurnRefs") or [],
+        findings=findings,
     )
+
+
+async def _load_findings(
+    conn: AsyncConnection, row: RowMapping, request: Request
+) -> list[FindingDetail]:
+    """B4-05: a red-team Call's findings, decrypted and access-logged. Only
+    attributable callers get plaintext: if there is something to decrypt and
+    no X-User-Id came with the request, fail like any other write-adjacent
+    endpoint rather than hand over leaked text with no audit trail. Every
+    other run type returns [] without touching the findings table."""
+    if row["type"] != "redteam" or row["parent_run_id"] is None:
+        return []
+    finding_rows = (
+        (
+            await conn.execute(
+                text(f"SELECT {FINDING_COLUMNS} FROM findings f WHERE f.run_id = :id"),
+                {"id": row["id"]},
+            )
+        )
+        .mappings()
+        .all()
+    )
+    if not finding_rows:
+        return []
+    return await reveal_findings(conn, list(finding_rows), user_id=require_user_id(request))
 
 
 def _isoformat(dt: datetime) -> str:

@@ -5,6 +5,7 @@ from app.api import (
     agents,
     attack_packs,
     dashboard,
+    findings,
     healthz,
     metrics,
     organizations,
@@ -41,6 +42,7 @@ def create_app() -> FastAPI:
     app.include_router(agents.router)
     app.include_router(attack_packs.router)
     app.include_router(dashboard.router)
+    app.include_router(findings.router)
     app.include_router(personas.router)
     app.include_router(metrics.router)
     app.include_router(test_profiles.router)

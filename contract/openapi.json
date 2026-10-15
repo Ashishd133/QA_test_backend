@@ -1169,6 +1169,199 @@
         "title": "FailingCheck",
         "type": "object"
       },
+      "FindingDetail": {
+        "description": "Plaintext. Reading one writes a `sensitive_access_log` row.",
+        "properties": {
+          "agentResponse": {
+            "title": "Agentresponse",
+            "type": "string"
+          },
+          "attackPrompt": {
+            "title": "Attackprompt",
+            "type": "string"
+          },
+          "category": {
+            "enum": [
+              "Injection",
+              "PII",
+              "Auth",
+              "Social",
+              "Harmful"
+            ],
+            "title": "Category",
+            "type": "string"
+          },
+          "createdAt": {
+            "title": "Createdat",
+            "type": "string"
+          },
+          "evidence": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "resolvedAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolvedat"
+          },
+          "runId": {
+            "title": "Runid",
+            "type": "string"
+          },
+          "severity": {
+            "enum": [
+              "critical",
+              "high",
+              "medium",
+              "low"
+            ],
+            "title": "Severity",
+            "type": "string"
+          },
+          "suggestedFix": {
+            "title": "Suggestedfix",
+            "type": "string"
+          },
+          "turnRefs": {
+            "default": [],
+            "items": {
+              "type": "integer"
+            },
+            "title": "Turnrefs",
+            "type": "array"
+          },
+          "verdict": {
+            "enum": [
+              "blocked",
+              "leaked",
+              "bypassed"
+            ],
+            "title": "Verdict",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "runId",
+          "category",
+          "severity",
+          "verdict",
+          "attackPrompt",
+          "suggestedFix",
+          "createdAt",
+          "agentResponse"
+        ],
+        "title": "FindingDetail",
+        "type": "object"
+      },
+      "FindingResolve": {
+        "properties": {
+          "resolved": {
+            "title": "Resolved",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "resolved"
+        ],
+        "title": "FindingResolve",
+        "type": "object"
+      },
+      "FindingSummary": {
+        "description": "B4-05. The list shape is deliberately *without* the sensitive text\n(evidence / agentResponse): a triage screen shows the masked row, and\nrevealing is an explicit, access-logged read of one finding. Defined\nhere (re-exported by app.schemas.findings) because RunDetail embeds\nFindingDetail.",
+        "properties": {
+          "attackPrompt": {
+            "title": "Attackprompt",
+            "type": "string"
+          },
+          "category": {
+            "enum": [
+              "Injection",
+              "PII",
+              "Auth",
+              "Social",
+              "Harmful"
+            ],
+            "title": "Category",
+            "type": "string"
+          },
+          "createdAt": {
+            "title": "Createdat",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "resolvedAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolvedat"
+          },
+          "runId": {
+            "title": "Runid",
+            "type": "string"
+          },
+          "severity": {
+            "enum": [
+              "critical",
+              "high",
+              "medium",
+              "low"
+            ],
+            "title": "Severity",
+            "type": "string"
+          },
+          "suggestedFix": {
+            "title": "Suggestedfix",
+            "type": "string"
+          },
+          "verdict": {
+            "enum": [
+              "blocked",
+              "leaked",
+              "bypassed"
+            ],
+            "title": "Verdict",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "runId",
+          "category",
+          "severity",
+          "verdict",
+          "attackPrompt",
+          "suggestedFix",
+          "createdAt"
+        ],
+        "title": "FindingSummary",
+        "type": "object"
+      },
       "GeneratedDraftSummary": {
         "properties": {
           "assertions": {
@@ -2846,6 +3039,14 @@
               }
             ],
             "title": "Endreason"
+          },
+          "findings": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/FindingDetail"
+            },
+            "title": "Findings",
+            "type": "array"
           },
           "goal": {
             "anyOf": [
@@ -4692,6 +4893,231 @@
         "summary": "Create Discovery Run",
         "tags": [
           "runs"
+        ]
+      }
+    },
+    "/v1/findings": {
+      "get": {
+        "operationId": "list_findings",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "severity",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "critical",
+                    "high",
+                    "medium",
+                    "low"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Severity"
+            }
+          },
+          {
+            "in": "query",
+            "name": "category",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "Injection",
+                    "PII",
+                    "Auth",
+                    "Social",
+                    "Harmful"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Category"
+            }
+          },
+          {
+            "in": "query",
+            "name": "verdict",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "blocked",
+                    "leaked",
+                    "bypassed"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Verdict"
+            }
+          },
+          {
+            "in": "query",
+            "name": "resolved",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Resolved"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/FindingSummary"
+                  },
+                  "title": "Response List Findings",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Findings",
+        "tags": [
+          "findings"
+        ]
+      }
+    },
+    "/v1/findings/{finding_id}": {
+      "get": {
+        "operationId": "get_finding",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "finding_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Finding Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FindingDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Finding",
+        "tags": [
+          "findings"
+        ]
+      },
+      "patch": {
+        "operationId": "resolve_finding",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "finding_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Finding Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FindingResolve"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FindingSummary"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Resolve Finding",
+        "tags": [
+          "findings"
         ]
       }
     },

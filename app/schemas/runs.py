@@ -133,6 +133,39 @@ class RunsDelta(APIModel):
     aggregate: RunAggregate
 
 
+AttackCategoryKey = Literal["Injection", "PII", "Auth", "Social", "Harmful"]
+FindingSeverity = Literal["critical", "high", "medium", "low"]
+FindingVerdict = Literal["blocked", "leaked", "bypassed"]
+
+
+class FindingSummary(APIModel):
+    """B4-05. The list shape is deliberately *without* the sensitive text
+    (evidence / agentResponse): a triage screen shows the masked row, and
+    revealing is an explicit, access-logged read of one finding. Defined
+    here (re-exported by app.schemas.findings) because RunDetail embeds
+    FindingDetail."""
+
+    id: str
+    run_id: str
+    category: AttackCategoryKey
+    severity: FindingSeverity
+    verdict: FindingVerdict
+    attack_prompt: str
+    suggested_fix: str
+    resolved_at: str | None = None
+    created_at: str
+
+
+class FindingDetail(FindingSummary):
+    """Plaintext. Reading one writes a `sensitive_access_log` row."""
+
+    agent_response: str
+    # Verbatim from the agent's turns; null only when verdict == "blocked".
+    evidence: str | None = None
+    # Indices into the run's transcript of the evidence turn(s).
+    turn_refs: list[int] = []
+
+
 class RunDetail(APIModel):
     id: str
     title: str
@@ -176,6 +209,9 @@ class RunDetail(APIModel):
     goal_met: bool | None = None
     goal_analysis: str | None = None
     goal_turn_refs: list[int] = []
+    # B4-05: a red-team Call's finding(s), decrypted -- reading them is
+    # access-logged. Always [] for any other run type.
+    findings: list[FindingDetail] = []
 
 
 class DummyIdentity(APIModel):
@@ -194,9 +230,6 @@ class DummyIdentity(APIModel):
 
 class SimulationRunCreate(APIModel):
     scenario_id: str
-
-
-AttackCategoryKey = Literal["Injection", "PII", "Auth", "Social", "Harmful"]
 
 
 class DiscoveryRunCreate(APIModel):

@@ -14,11 +14,13 @@ from __future__ import annotations
 import uuid
 
 from sqlalchemy import text
+from sqlalchemy.engine import RowMapping
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-from app.crypto import encrypt_text
+from app.crypto import decrypt_text, encrypt_text
 from app.engine.redteam.judge import GradedAttack
 from app.engine.redteam.packs import AttackPack
+from app.schemas.findings import FindingDetail, FindingSummary
 
 _INSERT_FINDING_SQL = text(
     "INSERT INTO findings "
@@ -55,3 +57,52 @@ async def insert_finding(
         },
     )
     return finding_id
+
+
+FINDING_COLUMNS = (
+    "f.id, f.run_id, f.category, f.severity, f.verdict, f.attack_prompt, f.agent_response, "
+    "f.evidence, f.suggested_fix, f.turn_refs, f.resolved_at, f.created_at"
+)
+
+_LOG_READ_SQL = text(
+    "INSERT INTO sensitive_access_log (id, resource_type, resource_id, user_id, action) "
+    "VALUES (:id, 'finding', :resource_id, :user_id, 'read')"
+)
+
+
+def finding_summary(row: RowMapping) -> FindingSummary:
+    return FindingSummary(
+        id=str(row["id"]),
+        run_id=str(row["run_id"]),
+        category=row["category"],
+        severity=row["severity"],
+        verdict=row["verdict"],
+        attack_prompt=row["attack_prompt"],
+        suggested_fix=row["suggested_fix"],
+        resolved_at=row["resolved_at"].isoformat() if row["resolved_at"] is not None else None,
+        created_at=row["created_at"].isoformat(),
+    )
+
+
+async def reveal_findings(
+    conn: AsyncConnection, rows: list[RowMapping], *, user_id: str
+) -> list[FindingDetail]:
+    """Decrypt findings for a caller and record that they did, in the same
+    transaction as the read (the audit row cannot be skipped by a crash
+    between the two). One log row per finding revealed. Legacy plaintext
+    rows (pre-B4-05 seed data) pass through `decrypt_text` unchanged."""
+    out: list[FindingDetail] = []
+    for row in rows:
+        await conn.execute(
+            _LOG_READ_SQL, {"id": uuid.uuid4(), "resource_id": row["id"], "user_id": user_id}
+        )
+        summary = finding_summary(row)
+        out.append(
+            FindingDetail(
+                **summary.model_dump(),
+                agent_response=decrypt_text(row["agent_response"]),
+                evidence=decrypt_text(row["evidence"]) if row["evidence"] is not None else None,
+                turn_refs=list(row["turn_refs"] or []),
+            )
+        )
+    return out
