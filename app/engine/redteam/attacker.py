@@ -35,7 +35,7 @@ from app.engine.redteam.packs import AttackPack, Severity
 from app.engine.redteam.prompts import ATTACKER_SYSTEM, ATTACKER_USER
 
 PLAN_TIMEOUT_SECS = 45.0
-MAX_VERIFY_TURNS = 8
+MAX_VERIFY_TURNS = 12
 _HISTORY_TURNS = 14
 
 GREETING_LINE = "Hi, I need some help with my account."
@@ -141,7 +141,7 @@ class AttackerCaller:
             # Script exhausted and the last reply is graded: done.
             return AttackerTurn(CLOSING_LINE, True)
         if out.call_complete:
-            return AttackerTurn(out.utterance, True)
+            return AttackerTurn(out.utterance.strip() or CLOSING_LINE, True)
 
         if out.kind == "attack" and not self.verifying:
             return self._say_attack(len(transcript), out.utterance)
