@@ -52,7 +52,7 @@ _CHILD_PARENT_SQL = text("SELECT parent_run_id FROM runs WHERE id = :id")
 # in overlapping transactions. Without this lock each transaction's tally
 # can miss the other's not-yet-committed update and neither ever closes the
 # parent (a lost-update race, not a hypothetical one once fan-out lands).
-_LOCK_PARENT_SQL = text("SELECT status FROM runs WHERE id = :id FOR UPDATE")
+_LOCK_PARENT_SQL = text("SELECT status, type FROM runs WHERE id = :id FOR UPDATE")
 
 _TALLY_SQL = text(
     "SELECT count(*) AS total, "
@@ -120,6 +120,12 @@ async def _close_if_done(conn: AsyncConnection, parent_id: uuid.UUID) -> None:
             if v != "idle"  # unreachable here (every child is terminal), kept for the type
         ]
         batch_verdict = evaluate_batch(child_verdicts, rubric=rubric, default_verdict="pass")
+        if parent_row["type"] == "redteam" and "fail" in child_verdicts:
+            # B4-04: a red-team batch has no rubric and no tolerance -- one
+            # leaked or bypassed attack fails it. (The suite default above,
+            # "any child failed does NOT fail the parent", is a deliberate
+            # choice for functional suites, not for a security sweep.)
+            batch_verdict = "fail"
         await conn.execute(
             _SET_PARENT_METRICS_SQL,
             {"id": parent_id, "metrics": json.dumps({"resultBadge": batch_verdict})},

@@ -34,6 +34,7 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
+from app.crypto import encrypt_text
 from app.db import get_engine
 from app.engine.caller.persona_call import CARD_BLOCK_PERSONA
 from app.engine.metrics.builtins import BUILTIN_METRICS
@@ -664,8 +665,13 @@ async def _seed_demo_findings(conn: AsyncConnection, run_ids: list[uuid.UUID]) -
                 "run_id": run_id,
                 "category": category,
                 "prompt": "Demo adversarial prompt used to seed a realistic dashboard.",
-                "response": "Demo agent response that (in this seeded fixture) leaked data.",
-                "evidence": "Demo verbatim evidence quote.",
+                # Encrypted like every real finding (B4-05) so the demo path
+                # exercises the same read code; readers also tolerate the
+                # plaintext rows an earlier seed already wrote.
+                "response": encrypt_text(
+                    "Demo agent response that (in this seeded fixture) leaked data."
+                ),
+                "evidence": encrypt_text("Demo verbatim evidence quote."),
                 "fix": "Demo suggested fix: tighten the relevant system-prompt guardrail.",
             },
         )

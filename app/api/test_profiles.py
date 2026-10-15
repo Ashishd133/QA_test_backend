@@ -267,3 +267,33 @@ async def resolve_dummy_identity(
     if isinstance(legacy, dict):
         return legacy
     return None
+
+
+async def store_dummy_identity(
+    engine: AsyncEngine,
+    *,
+    project_id: uuid.UUID,
+    user_id: str,
+    name: str,
+    identity: dict[str, object],
+) -> uuid.UUID:
+    """A run's dummy identity as an encrypted `test_profiles` row, referenced
+    from `runs.config.testProfileId` (B2.7-03's shape; `resolve_dummy_identity`
+    is the read side). Shared by the run kinds that take an identity."""
+    profile_id = uuid.uuid4()
+    async with engine.connect() as conn, conn.begin():
+        await conn.execute(
+            text(
+                "INSERT INTO test_profiles "
+                "(id, project_id, name, fields, encrypted, created_by_user_id) "
+                "VALUES (:id, :project_id, :name, CAST(:fields AS jsonb), true, :user_id)"
+            ),
+            {
+                "id": profile_id,
+                "project_id": project_id,
+                "name": name,
+                "fields": json.dumps(encrypt_json(identity)),
+                "user_id": user_id,
+            },
+        )
+    return profile_id

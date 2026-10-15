@@ -3,12 +3,15 @@ from fastapi.routing import APIRoute
 
 from app.api import (
     agents,
+    attack_packs,
     dashboard,
+    findings,
     healthz,
     metrics,
     organizations,
     personas,
     projects,
+    redteam,
     runs,
     suites,
     test_profiles,
@@ -34,9 +37,12 @@ def create_app() -> FastAPI:
     app.add_middleware(ServiceTokenMiddleware, token=get_settings().python_service_token)
     app.include_router(healthz.router)
     app.include_router(runs.router)
+    app.include_router(redteam.router)
     app.include_router(suites.router)
     app.include_router(agents.router)
+    app.include_router(attack_packs.router)
     app.include_router(dashboard.router)
+    app.include_router(findings.router)
     app.include_router(personas.router)
     app.include_router(metrics.router)
     app.include_router(test_profiles.router)
