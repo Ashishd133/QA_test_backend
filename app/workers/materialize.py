@@ -5,9 +5,9 @@ ticket, and the only way a scripted executor (fake_runner.py) and a real one
 from fake_runner.py so both executors share one implementation instead of
 two copies drifting apart.
 
-Scoped to turn/assertion only: node/intent/attack have no reduce-from-events
-read path yet (RunDetail only exposes transcript/resultAssertions), so
-there's nothing for a materialized copy of those to agree with.
+Turn/assertion/metric_result as before. B5-03 adds discovery's node/intent
+events (-> discovery_nodes/edges/intents); attack still has no
+reduce-from-events read path, so nothing to materialize for it yet.
 """
 
 import json
@@ -99,5 +99,77 @@ async def materialize_run(conn: AsyncConnection, run_id: uuid.UUID) -> None:
                 "value": json.dumps(data.get("value")),
                 "turn_refs": data.get("turnRefs", []),
                 "rationale": data.get("rationale"),
+            },
+        )
+
+
+_MATERIALIZE_NODES_SQL = text(
+    "SELECT data FROM run_events WHERE run_id = :run_id AND type = 'node' ORDER BY seq"
+)
+_MATERIALIZE_INTENTS_SQL = text(
+    "SELECT data FROM run_events WHERE run_id = :run_id AND type = 'intent' ORDER BY seq"
+)
+_UPSERT_NODE_SQL = text(
+    "INSERT INTO discovery_nodes (run_id, node_id, label, x, y, state, blocked_reason) "
+    "VALUES (:run_id, :node_id, :label, :x, :y, :state, :blocked_reason) "
+    "ON CONFLICT (run_id, node_id) DO UPDATE SET label = EXCLUDED.label, x = EXCLUDED.x, "
+    "y = EXCLUDED.y, state = EXCLUDED.state, blocked_reason = EXCLUDED.blocked_reason"
+)
+_INSERT_EDGE_SQL = text(
+    "INSERT INTO discovery_edges (run_id, from_node, to_node) "
+    "VALUES (:run_id, :from_node, :to_node) ON CONFLICT DO NOTHING"
+)
+_UPSERT_INTENT_SQL = text(
+    "INSERT INTO discovery_intents (run_id, name, state, path, reason) "
+    "VALUES (:run_id, :name, :state, :path, :reason) "
+    "ON CONFLICT (run_id, name) DO UPDATE SET state = EXCLUDED.state, "
+    "path = EXCLUDED.path, reason = EXCLUDED.reason"
+)
+
+
+async def materialize_discovery(conn: AsyncConnection, run_id: uuid.UUID) -> None:
+    """B5-03: node and intent events are upserts keyed by node_id / name, so
+    the materialized rows are the *last* frame per key -- reduced from the
+    event log, same invariant as `materialize_run`. Edges come from each
+    node's `fromNodes`; edge rows reference nodes by FK, so nodes go first
+    and an edge to an unknown node is dropped rather than failing the run."""
+    nodes: dict[str, dict[str, object]] = {}
+    for data in (await conn.execute(_MATERIALIZE_NODES_SQL, {"run_id": run_id})).scalars().all():
+        nodes[data["nodeId"]] = data
+    for node_id, data in nodes.items():
+        await conn.execute(
+            _UPSERT_NODE_SQL,
+            {
+                "run_id": run_id,
+                "node_id": node_id,
+                "label": data["label"],
+                "x": data["x"],
+                "y": data["y"],
+                "state": data["state"],
+                "blocked_reason": data.get("blockedReason"),
+            },
+        )
+    for node_id, data in nodes.items():
+        from_nodes = data.get("fromNodes") or []
+        assert isinstance(from_nodes, list)
+        for from_node in from_nodes:
+            if from_node in nodes:
+                await conn.execute(
+                    _INSERT_EDGE_SQL,
+                    {"run_id": run_id, "from_node": from_node, "to_node": node_id},
+                )
+
+    intents: dict[str, dict[str, object]] = {}
+    for data in (await conn.execute(_MATERIALIZE_INTENTS_SQL, {"run_id": run_id})).scalars().all():
+        intents[data["name"]] = data
+    for name, data in intents.items():
+        await conn.execute(
+            _UPSERT_INTENT_SQL,
+            {
+                "run_id": run_id,
+                "name": name,
+                "state": data["state"],
+                "path": data["path"],
+                "reason": data.get("reason"),
             },
         )

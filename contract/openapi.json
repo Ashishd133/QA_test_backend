@@ -863,20 +863,62 @@
         "type": "object"
       },
       "DoneData": {
+        "$defs": {
+          "DiscoveryResult": {
+            "description": "B5-03: the discovery run's completion summary (`done.discoveryResult`).\nThe full map is in the run's node/intent events; this is the headline.",
+            "properties": {
+              "intentsBlocked": {
+                "title": "Intentsblocked",
+                "type": "integer"
+              },
+              "intentsMapped": {
+                "title": "Intentsmapped",
+                "type": "integer"
+              },
+              "nodesBlocked": {
+                "title": "Nodesblocked",
+                "type": "integer"
+              },
+              "nodesMapped": {
+                "title": "Nodesmapped",
+                "type": "integer"
+              },
+              "turnsUsed": {
+                "title": "Turnsused",
+                "type": "integer"
+              },
+              "unexplored": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Unexplored",
+                "type": "array"
+              }
+            },
+            "required": [
+              "nodesMapped",
+              "nodesBlocked",
+              "intentsMapped",
+              "intentsBlocked",
+              "turnsUsed"
+            ],
+            "title": "DiscoveryResult",
+            "type": "object"
+          }
+        },
         "description": "Type-specific completion payload (spine \u00a74): populate whichever\nsubset applies to the run's type (simulation | discovery | redteam).",
         "properties": {
           "discoveryResult": {
             "anyOf": [
               {
-                "additionalProperties": true,
-                "type": "object"
+                "$ref": "#/$defs/DiscoveryResult"
               },
               {
                 "type": "null"
               }
             ],
-            "default": null,
-            "title": "Discoveryresult"
+            "default": null
           },
           "exposure": {
             "anyOf": [
@@ -1603,6 +1645,7 @@
         "type": "object"
       },
       "NodeData": {
+        "description": "B5-03: an upsert keyed by `node_id` -- a node is re-emitted when its\nstate or incoming edges change, and the latest frame wins (same\n\"snapshot, not delta\" discipline as `ExposureData`). `from_nodes` are the\nnodes with an edge into this one, so the map can be drawn from events\nalone.",
         "properties": {
           "blockedReason": {
             "anyOf": [
@@ -1615,6 +1658,14 @@
             ],
             "default": null,
             "title": "Blockedreason"
+          },
+          "fromNodes": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Fromnodes",
+            "type": "array"
           },
           "label": {
             "title": "Label",
