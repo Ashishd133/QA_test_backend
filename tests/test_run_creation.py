@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from app.api.test_profiles import resolve_dummy_identity
 from app.config import get_settings
+from app.engine.redteam.packs import select_packs
 from app.main import app
 from tests.conftest import _test_engine, auth_headers, builtin_persona_id, requires_test_db
 
@@ -266,30 +267,119 @@ async def test_create_discovery_run_valid_format_wrong_identity_is_not_an_error(
         await _cleanup(engine, agent_id)
 
 
-async def test_create_redteam_run_success() -> None:
+async def test_create_redteam_run_is_a_batch_with_one_child_per_attack_pack() -> None:
     engine = _test_engine()
     agent_id = await _make_agent(engine, max_concurrency=5)
     try:
         async with await _client() as client:
             response = await client.post(
                 "/v1/redteam/runs",
-                json={"agentId": str(agent_id), "categories": ["PII", "Auth"]},
+                json={
+                    "agentId": str(agent_id),
+                    "categories": ["PII", "Auth"],
+                    "dummyIdentity": _DUMMY_IDENTITY,
+                },
             )
         assert response.status_code == 202
+        parent_id = uuid.UUID(response.json()["runId"])
 
+        expected = {p.id for p in select_packs(["PII", "Auth"])}
         async with engine.connect() as conn:
-            row = (
+            parent = (
                 (
                     await conn.execute(
-                        text("SELECT type, config FROM runs WHERE id = :id"),
-                        {"id": uuid.UUID(response.json()["runId"])},
+                        text("SELECT type, status, config FROM runs WHERE id = :id"),
+                        {"id": parent_id},
                     )
                 )
                 .mappings()
                 .one()
             )
-        assert row["type"] == "redteam"
-        assert row["config"]["categories"] == ["PII", "Auth"]
+            children = (
+                (
+                    await conn.execute(
+                        text(
+                            "SELECT type, status, config, parent_run_id FROM runs "
+                            "WHERE parent_run_id = :id"
+                        ),
+                        {"id": parent_id},
+                    )
+                )
+                .mappings()
+                .all()
+            )
+        assert parent["type"] == "redteam" and parent["status"] == "queued"
+        assert parent["config"]["categories"] == ["PII", "Auth"]
+        assert {c["config"]["packId"] for c in children} == expected
+        assert all(c["type"] == "redteam" and c["status"] == "queued" for c in children)
+        assert all(c["config"]["packVersion"] == 1 for c in children)
+        # Every child resolves the same stored (encrypted) identity.
+        profile_ids = {c["config"]["testProfileId"] for c in children}
+        assert len(profile_ids) == 1
+        resolved = await resolve_dummy_identity(engine, children[0]["config"], user_id="user-1")
+        assert resolved is not None and resolved["name"] == "Priya Sharma"
+    finally:
+        await _cleanup(engine, agent_id)
+
+
+async def test_redteam_attacks_that_need_a_verified_session_require_an_identity() -> None:
+    engine = _test_engine()
+    agent_id = await _make_agent(engine, max_concurrency=5)
+    try:
+        async with await _client() as client:
+            response = await client.post(
+                "/v1/redteam/runs", json={"agentId": str(agent_id), "categories": ["PII"]}
+            )
+        assert response.status_code == 422
+        error = response.json()["error"]
+        assert error["code"] == "identity_required"
+        assert "pii-family-pretext" in error["details"]["packs"]
+    finally:
+        await _cleanup(engine, agent_id)
+
+
+async def test_redteam_without_an_identity_runs_the_attacks_that_do_not_need_one() -> None:
+    engine = _test_engine()
+    agent_id = await _make_agent(engine, max_concurrency=5)
+    try:
+        async with await _client() as client:
+            response = await client.post(
+                "/v1/redteam/runs", json={"agentId": str(agent_id), "categories": ["Injection"]}
+            )
+        assert response.status_code == 202
+        async with engine.connect() as conn:
+            n = (
+                await conn.execute(
+                    text("SELECT count(*) FROM runs WHERE parent_run_id = :id"),
+                    {"id": uuid.UUID(response.json()["runId"])},
+                )
+            ).scalar_one()
+        assert n == len(select_packs(["Injection"]))
+    finally:
+        await _cleanup(engine, agent_id)
+
+
+async def test_redteam_idempotency_key_returns_the_original_batch() -> None:
+    engine = _test_engine()
+    agent_id = await _make_agent(engine, max_concurrency=5)
+    key = f"rt-{uuid.uuid4()}"
+    try:
+        async with await _client() as client:
+            body = {"agentId": str(agent_id), "categories": ["Injection"]}
+            first = await client.post(
+                "/v1/redteam/runs", json=body, headers={"Idempotency-Key": key}
+            )
+            second = await client.post(
+                "/v1/redteam/runs", json=body, headers={"Idempotency-Key": key}
+            )
+        assert first.json()["runId"] == second.json()["runId"]
+        async with engine.connect() as conn:
+            n = (
+                await conn.execute(
+                    text("SELECT count(*) FROM runs WHERE agent_id = :a"), {"a": agent_id}
+                )
+            ).scalar_one()
+        assert n == 1 + len(select_packs(["Injection"]))  # one batch, not two
     finally:
         await _cleanup(engine, agent_id)
 
@@ -331,6 +421,6 @@ async def test_create_run_unknown_agent_is_404() -> None:
     async with await _client() as client:
         response = await client.post(
             "/v1/redteam/runs",
-            json={"agentId": str(uuid.uuid4()), "categories": ["PII"]},
+            json={"agentId": str(uuid.uuid4()), "categories": ["Injection"]},
         )
     assert response.status_code == 404

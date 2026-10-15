@@ -17,6 +17,7 @@ session. Test identity to verify as: Asha Rao, DOB 1990-04-12, phrase
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 
 from dotenv import load_dotenv
@@ -210,7 +211,14 @@ class Greeter(Agent):
             date_of_birth: The caller's date of birth in YYYY-MM-DD format.
             security_phrase: The security phrase the caller stated.
         """
-        record = find_by_identity(full_name, date_of_birth, security_phrase)
+        # Local red-team testing only (B4-02): a deliberately weakened gate
+        # that accepts a known name alone, so the auth-bypass attack packs
+        # can be shown to defeat a weak gate. Off by default; never set in
+        # a deployed environment.
+        if os.environ.get("REFERENCE_AGENT_WEAK_GATE") == "1":
+            record = find_by_name(full_name)
+        else:
+            record = find_by_identity(full_name, date_of_birth, security_phrase)
         if record is None:
             context.userdata.failed_attempts += 1
             if context.userdata.failed_attempts >= MAX_VERIFICATION_ATTEMPTS:

@@ -98,7 +98,7 @@ class GeminiExplorerLLM:
             vertexai=True, credentials=credentials, project=project, location=location
         )
 
-    async def _generate[T: BaseModel](
+    async def generate[T: BaseModel](
         self, system: str, prompt: str, schema: type[T], *, temperature: float
     ) -> T:
         last: Exception | None = None
@@ -123,10 +123,10 @@ class GeminiExplorerLLM:
         raise last
 
     async def plan(self, system: str, prompt: str) -> ExplorerLLMOutput:
-        return await self._generate(system, prompt, ExplorerLLMOutput, temperature=0.3)
+        return await self.generate(system, prompt, ExplorerLLMOutput, temperature=0.3)
 
     async def propose(self, system: str, prompt: str) -> ProposedCandidates:
-        return await self._generate(system, prompt, ProposedCandidates, temperature=0.2)
+        return await self.generate(system, prompt, ProposedCandidates, temperature=0.2)
 
 
 async def propose_candidates(

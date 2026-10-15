@@ -35,9 +35,12 @@ def test_runtime_error_codes_are_declared_on_the_endpoints_that_raise_them() -> 
             "$ref"
         ]
 
-    for path in ("/v1/simulations/runs", "/v1/discovery/runs", "/v1/redteam/runs"):
+    for path in ("/v1/simulations/runs", "/v1/discovery/runs"):
         assert ref(path, "409") == envelope
     assert ref("/v1/runs/{run_id}/rerun", "409") == envelope
     assert ref("/v1/runs/{run_id}/rerun", "422") == envelope
     assert ref("/v1/suites/{suite_id}/run", "422") == envelope
+    # B4-04: red team is a batch now -- 422 (batch_too_large / identity_required), no 409.
+    assert ref("/v1/redteam/runs", "422") == envelope
+    assert "409" not in paths["/v1/redteam/runs"]["post"]["responses"]
     assert "409" not in paths["/v1/suites/{suite_id}/run"]["post"]["responses"]

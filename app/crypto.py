@@ -73,3 +73,32 @@ def decrypt_json(envelope: dict[str, object]) -> dict[str, object]:
     if not isinstance(result, dict):
         raise ValueError("decrypted payload is not a JSON object")
     return result
+
+
+def encrypt_text(value: str) -> str:
+    """B4-05: for Text columns (`findings.evidence` / `agent_response`) that
+    can't hold a jsonb envelope. Same scheme, same keys, same fail-closed
+    behavior as `encrypt_json` -- the envelope is just serialized to a
+    string (`{"v": 1, "ct": "..."}`) so `decrypt_text` can tell it from any
+    legacy plaintext by its shape."""
+    return json.dumps(encrypt_json({"text": value}))
+
+
+def decrypt_text(stored: str) -> str:
+    """Inverse of `encrypt_text`. A value that is not one of our envelopes is
+    treated as legacy plaintext and returned unchanged (rows written before
+    B4-05, e.g. app.seed's demo findings) -- never an error, and never
+    reachable by an attacker-chosen string that decrypts to something else
+    since a forged envelope fails Fernet authentication."""
+    try:
+        envelope = json.loads(stored)
+    except ValueError:
+        return stored
+    if not (
+        isinstance(envelope, dict) and envelope.get("v") == _FORMAT_VERSION and "ct" in envelope
+    ):
+        return stored
+    text = decrypt_json(envelope).get("text")
+    if not isinstance(text, str):
+        raise ValueError("decrypted findings payload has no text")
+    return text

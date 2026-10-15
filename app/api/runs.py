@@ -30,7 +30,6 @@ from app.schemas.runs import (
     DashboardRunRow,
     DiscoveryRunCreate,
     DummyIdentity,
-    RedteamRunCreate,
     ResultAssertion,
     RunAggregate,
     RunCost,
@@ -937,34 +936,6 @@ async def create_discovery_run(
                 text("DELETE FROM test_profiles WHERE id = :id"), {"id": profile_row["id"]}
             )
         raise
-    return RunCreateResponse(run_id=str(run_id))
-
-
-@router.post(
-    "/v1/redteam/runs",
-    response_model=RunCreateResponse,
-    status_code=status.HTTP_202_ACCEPTED,
-    responses=CONCURRENCY_LIMIT_RESPONSE,
-)
-async def create_redteam_run(
-    body: RedteamRunCreate,
-    user_id: str = Depends(require_user_id),
-    project_id: uuid.UUID = Depends(require_project_id),
-    engine: AsyncEngine = Depends(get_engine),
-    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
-) -> RunCreateResponse:
-    agent_id = uuid.UUID(body.agent_id)
-
-    run_id = await _create_run(
-        engine,
-        project_id=project_id,
-        run_type="redteam",
-        agent_id=agent_id,
-        scenario_id=None,
-        config={"categories": body.categories},
-        idempotency_key=idempotency_key,
-        user_id=user_id,
-    )
     return RunCreateResponse(run_id=str(run_id))
 
 

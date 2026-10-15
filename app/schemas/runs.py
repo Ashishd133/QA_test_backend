@@ -207,6 +207,10 @@ class DiscoveryRunCreate(APIModel):
 class RedteamRunCreate(APIModel):
     agent_id: str
     categories: list[AttackCategoryKey]
+    # B4-04: needed by attacks that only make sense from an authenticated
+    # session (e.g. PII lookups behind the agent's identity gate). Stored
+    # encrypted as a test profile, exactly like a discovery run's.
+    dummy_identity: DummyIdentity | None = None
 
 
 class RunCreateResponse(APIModel):

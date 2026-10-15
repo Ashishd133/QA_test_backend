@@ -2426,6 +2426,16 @@
             },
             "title": "Categories",
             "type": "array"
+          },
+          "dummyIdentity": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DummyIdentity"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -5570,7 +5580,7 @@
             },
             "description": "Successful Response"
           },
-          "409": {
+          "422": {
             "content": {
               "application/json": {
                 "schema": {
@@ -5578,22 +5588,12 @@
                 }
               }
             },
-            "description": "`concurrency_limit`: the agent already has `maxConcurrency` live runs. `error.details.retryAfterMs` is the suggested retry delay."
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
+            "description": "`validation_error` (bad body, empty suite/batch), `not_supported` (personaIds/conditionProfileIds), or `batch_too_large` (the batch would queue more calls than `suite_run_batch_cap`)."
           }
         },
         "summary": "Create Redteam Run",
         "tags": [
-          "runs"
+          "redteam"
         ]
       }
     },
